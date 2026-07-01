@@ -1,0 +1,1015 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PocketAgent Console</title>
+  <link rel="stylesheet" href="/styles.css?v=20260628_i18n_headerfix" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">PA</div>
+        <div>
+          <div class="brand-title">PocketAgent</div>
+          <div class="brand-subtitle">Layer Console</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-section="visualization">Visualization</button>
+        <button class="nav-item" data-section="download">Download</button>
+        <button class="nav-item" data-section="data">Data</button>
+        <button class="nav-item" data-section="feature">Feature</button>
+        <button class="nav-item" data-section="agent">Agent</button>
+        <button class="nav-item" data-section="evaluation">Evaluation</button>
+        <button class="nav-item" data-section="live">Live</button>
+        <button class="nav-item" data-section="config">Config</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <div class="language-switch"><button id="languageToggleBtn" class="secondary small" type="button">Language</button></div>
+      <section id="visualization" class="page active">
+        <div class="visual-shell" id="visualShell">
+          <div class="visual-tabs" role="tablist">
+            <button class="visual-tab active" data-visual-tab="market" type="button">Market View</button>
+            <button class="visual-tab" data-visual-tab="evaluation" type="button">Evaluation Replay</button>
+            <button class="visual-tab" data-visual-tab="live" type="button">Live Monitor</button>
+          </div>
+          <div class="visual-header">
+            <div class="visual-quote">
+              <strong id="visualQuoteSymbol">-</strong>
+              <span id="visualQuotePrice" class="quote-price">-</span>
+              <span id="visualQuoteChange" class="quote-change">-</span>
+            </div>
+            <div class="visual-actions">
+              <button id="refreshVisualizationBtn" class="secondary small">Refresh</button>
+              <button id="openVisualDetailBtn" class="secondary small">Table</button>
+              <button id="visualGoDataBtn" class="secondary small" type="button">Data</button>
+              <button id="visualInspectorToggleBtn" class="secondary small" type="button">Values</button>
+            </div>
+          </div>
+
+          <div class="visual-toolbar">
+            <label>Market Data Root<input id="visualDbPath" value="runtime_layer/data" /></label>
+            <label>Symbol
+              <input id="visualSymbolInput" list="visualSymbolOptions" placeholder="000001.SZ" />
+              <datalist id="visualSymbolOptions"></datalist>
+            </label>
+            <label>Adjust<select id="visualAdjustSelect"></select></label>
+            <div class="visual-periods" id="visualFreqButtons">
+              <button type="button" data-freq="5min">5min</button>
+              <button type="button" data-freq="15min">15min</button>
+              <button type="button" data-freq="30min">30min</button>
+              <button type="button" data-freq="60min">60min</button>
+              <button type="button" data-freq="daily">Daily</button>
+              <button type="button" data-freq="weekly">Weekly</button>
+              <button type="button" data-freq="monthly">Monthly</button>
+            </div>
+            <label>Sub Panels
+              <select id="visualSubPanelCount">
+                <option value="1">Main + 1</option>
+                <option value="2">Main + 2</option>
+                <option value="3" selected>Main + 3</option>
+              </select>
+            </label>
+            <div class="visual-indicator-picker">
+              <button id="visualIndicatorMenuBtn" class="visual-toggle" type="button">Indicators</button>
+              <div id="visualIndicatorMenu" class="visual-indicator-menu hidden"></div>
+            </div>
+          </div>
+
+          <div id="visualEvaluationPane" class="visual-evaluation-pane hidden">
+            <div class="visual-replay-toolbar">
+              <label>Evaluation Run<select id="visualEvaluationRunSelect"></select></label>
+              <button id="refreshVisualEvaluationRunsBtn" class="secondary small" type="button">Refresh Runs</button>
+              <button id="refreshVisualEvaluationReplayBtn" class="secondary small" type="button">Refresh Replay</button>
+              <button id="stopVisualEvaluationBtn" class="secondary small danger-text" type="button" disabled>Stop Evaluation</button>
+            </div>
+            <div id="visualEvaluationStatus" class="visual-status">Select an evaluation run.</div>
+          </div>
+
+          <div id="visualChartStatus" class="visual-status">Loading...</div>
+
+          <div class="visual-workspace">
+            <div id="visualChartGrid" class="visual-chart-grid panel-count-3">
+              <section class="visual-panel visual-price-panel">
+                <div class="visual-panel-label">
+                  <span>K-line</span>
+                  <span id="visualPriceLegend">-</span>
+                </div>
+                <canvas id="visualPriceCanvas"></canvas>
+              </section>
+              <section class="visual-panel visual-sub-panel" data-panel-slot="0">
+                <div class="visual-panel-label visual-sub-panel-label">
+                  <select class="visualPanelSelect" data-panel-slot="0" aria-label="First sub panel"></select>
+                  <span id="visualPanelLegend0">-</span>
+                </div>
+                <canvas id="visualPanelCanvas0" data-panel-slot="0"></canvas>
+              </section>
+              <section class="visual-panel visual-sub-panel" data-panel-slot="1">
+                <div class="visual-panel-label visual-sub-panel-label">
+                  <select class="visualPanelSelect" data-panel-slot="1" aria-label="Second sub panel"></select>
+                  <span id="visualPanelLegend1">-</span>
+                </div>
+                <canvas id="visualPanelCanvas1" data-panel-slot="1"></canvas>
+              </section>
+              <section class="visual-panel visual-sub-panel" data-panel-slot="2">
+                <div class="visual-panel-label visual-sub-panel-label">
+                  <select class="visualPanelSelect" data-panel-slot="2" aria-label="Third sub panel"></select>
+                  <span id="visualPanelLegend2">-</span>
+                </div>
+                <canvas id="visualPanelCanvas2" data-panel-slot="2"></canvas>
+              </section>
+            </div>
+            <aside id="visualFeatureInspector" class="visual-feature-inspector">
+              <div class="visual-inspector-head">
+                <strong>Technical Values</strong>
+                <span id="visualInspectorTime">-</span>
+              </div>
+              <div id="visualInspectorContent" class="visual-inspector-content">
+                <div class="muted">Move across the chart to inspect indicator values.</div>
+              </div>
+            </aside>
+            <aside id="evaluationStatsPanel" class="evaluation-stats-panel hidden">
+              <div class="visual-inspector-head"><strong>Evaluation Stats</strong><span id="evaluationReplayTime">-</span></div>
+              <div id="evaluationStatsContent" class="visual-inspector-content"><div class="muted">No evaluation data.</div></div>
+            </aside>
+          </div>
+
+          <div id="visualLivePane" class="visual-evaluation-pane hidden">
+            <div class="empty-card">Live Monitor is coming soon.</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="download" class="page">
+        <div class="page-header">
+          <h1>Download Layer</h1>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <h2>Download Data</h2>
+            <div class="form-grid two-cols">
+              <label>Market Data Root
+                <input id="downloadDbPath" value="runtime_layer/data" />
+              </label>
+              <label>Shard Storage Root
+                <input id="downloadStorageRoot" value="runtime_layer/data" />
+              </label>
+              <label>Symbols File
+                <input id="downloadSymbolsFile" value="config/universe/download_symbols.txt" />
+              </label>
+              <div class="span-2 inline-actions">
+                <button id="useConfigSymbolsBtn" type="button" class="secondary small">Use Config Selection</button>
+                <button id="editConfigSymbolsBtn" type="button" class="secondary small">Edit Symbols In Config</button>
+                <span id="downloadSymbolSummary" class="inline-status">Symbol file is managed in Config.</span>
+              </div>
+              <label>Start Date
+                <input id="downloadStart" type="date" value="2024-01-01" />
+              </label>
+              <label>End Date
+                <input id="downloadEnd" type="date" value="2024-01-31" />
+              </label>
+              <div class="span-2 form-block">
+                <div class="field-label">Frequencies</div>
+                <div class="checkbox-grid">
+                  <label class="checkbox-line no-margin"><input class="downloadFreq" type="checkbox" value="5" checked /> 5min</label>
+                  <label class="checkbox-line no-margin"><input class="downloadFreq" type="checkbox" value="30" /> 30min</label>
+                  <label class="checkbox-line no-margin"><input class="downloadFreq" type="checkbox" value="d" checked /> Daily</label>
+                </div>
+              </div>
+              <div class="span-2 form-block">
+                <div class="field-label">Adjust Modes</div>
+                <div class="checkbox-grid">
+                  <label class="checkbox-line no-margin"><input class="downloadAdjustflag" type="checkbox" value="3" checked /> None</label>
+                  <label class="checkbox-line no-margin"><input class="downloadAdjustflag" type="checkbox" value="2" checked /> Pre</label>
+                  <label class="checkbox-line no-margin"><input class="downloadAdjustflag" type="checkbox" value="1" /> Post</label>
+                </div>
+              </div>
+              <label>Request Sleep
+                <input id="downloadSleep" type="number" min="0" step="0.1" value="0.5" />
+              </label>
+              <label>Workers
+                <input id="downloadWorkers" type="number" min="1" max="32" step="1" value="1" />
+              </label>
+              <label class="checkbox-line"><input id="downloadReplace" type="checkbox" /> Replace existing symbol rows</label>
+              <label class="checkbox-line"><input id="downloadSkipExisting" type="checkbox" checked /> Skip verified completed slices</label>
+            </div>
+            <div class="actions">
+              <button id="startDownloadBtn">Start Download</button>
+              <button id="stopDownloadBtn" disabled class="secondary">Stop</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Download Job</h2>
+            <div id="jobStatus" class="job-status muted">No active job</div>
+            <div class="progress-wrap"><div id="jobProgressBar" class="progress-bar" style="width:0%"></div></div>
+            <div id="jobSummary" class="summary-grid compact">
+              <div><span>Progress</span><strong>-</strong></div>
+              <div><span>Current</span><strong>-</strong></div>
+              <div><span>Completed</span><strong>-</strong></div>
+              <div><span>Succeeded</span><strong>-</strong></div>
+              <div><span>Failed</span><strong>-</strong></div>
+              <div><span>Saved Rows</span><strong>-</strong></div>
+            </div>
+            <div class="report-path">CSV: <span id="downloadReportPath">-</span></div>
+            <div id="downloadReportSummary" class="muted">No download CSV loaded.</div>
+            <details class="job-log-box" open>
+              <summary>Download Logs</summary>
+              <pre id="downloadJobLogs" class="mini-log">No logs.</pre>
+            </details>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Failed / Warning Download Rows</h2>
+          <div class="table-wrap compact-scroll">
+            <table>
+              <thead><tr><th>Symbol</th><th>Freq</th><th>Adjust</th><th>Status</th><th>Rows</th><th>Error</th></tr></thead>
+              <tbody id="failedDownloadTableBody"><tr><td colspan="6" class="muted">No failed or warning rows.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="data" class="page">
+        <div class="page-header row-between">
+          <div>
+            <h1>Data Layer</h1>
+          </div>
+          <button id="refreshInventoryBtn" class="secondary">Refresh</button>
+        </div>
+
+        <div class="card">
+          <h2>Local Database</h2>
+          <div class="form-grid two-cols">
+            <label>Database
+              <input id="dataDbPath" value="runtime_layer/data" />
+            </label>
+          </div>
+          <div id="inventorySummary" class="summary-grid compact result-summary">
+            <div><span>Database</span><strong>-</strong></div>
+            <div><span>Symbols</span><strong>-</strong></div>
+            <div><span>Total Rows</span><strong>-</strong></div>
+            <div><span>Date Range</span><strong>-</strong></div>
+          </div>
+          <div id="freqSummary" class="freq-chip-wrap"></div>
+        </div>
+
+        <div class="card">
+          <h2>Derived Bars</h2>
+          <div class="form-grid two-cols">
+            <label>Symbols File
+              <input id="materializeSymbolsFile" value="config/universe/download_symbols.txt" />
+            </label>
+            <label>Base Frequency
+              <select id="materializeBaseFreq">
+                <option value="5min" selected>5min</option>
+                <option value="30min">30min</option>
+                <option value="daily">daily</option>
+              </select>
+            </label>
+            <label>Adjust
+              <select id="materializeAdjust">
+                <option value="none">none</option>
+                <option value="pre" selected>pre</option>
+                <option value="post">post</option>
+              </select>
+            </label>
+            <label>Start Date
+              <input id="materializeStart" type="date" />
+            </label>
+            <label>End Date
+              <input id="materializeEnd" type="date" />
+            </label>
+            <label class="span-2">CSV Output
+              <input id="materializeOutput" value="runtime_layer/reports/materialize_dashboard_report.csv" />
+            </label>
+            <div class="span-2 form-block">
+              <div class="field-label">Targets</div>
+              <div class="checkbox-grid">
+                <label class="checkbox-line no-margin"><input class="materializeTarget" type="checkbox" value="15min" checked /> 15min</label>
+                <label class="checkbox-line no-margin"><input class="materializeTarget" type="checkbox" value="60min" /> 60min</label>
+                <label class="checkbox-line no-margin"><input class="materializeTarget" type="checkbox" value="weekly" /> weekly</label>
+                <label class="checkbox-line no-margin"><input class="materializeTarget" type="checkbox" value="monthly" /> monthly</label>
+              </div>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="materializeBarsBtn" type="button">Build Derived Bars</button>
+            <button id="stopMaterializeBtn" class="secondary" type="button" disabled>Stop</button>
+          </div>
+          <div id="materializeJobStatus" class="job-status muted">No materialize job</div>
+          <div class="progress-wrap"><div id="materializeProgressBar" class="progress-bar" style="width:0%"></div></div>
+          <div id="materializeSummary" class="summary-grid compact result-summary"></div>
+          <details class="job-log-box">
+            <summary>Derived Bar Logs</summary>
+            <pre id="materializeJobLogs" class="mini-log">No logs.</pre>
+          </details>
+        </div>
+
+        <div class="card">
+          <h2>Portable Bundle</h2>
+          <p class="muted">Export data/feature shards into one portable DuckDB file for migration. Import restores the original shard layout.</p>
+          <div class="form-grid two-cols">
+            <label class="span-2">Bundle Path
+              <input id="bundlePath" value="runtime_layer/bundles/pocketagent_bundle.duckdb" />
+            </label>
+            <label>Feature Dataset Dir
+              <input id="bundleFeatureOutputDir" value="runtime_layer/reports/feature_dataset" />
+            </label>
+            <div class="form-block">
+              <div class="field-label">Include</div>
+              <label class="checkbox-line"><input id="bundleIncludeData" type="checkbox" checked /> Data Layer shards</label>
+              <label class="checkbox-line"><input id="bundleIncludeFeature" type="checkbox" checked /> Feature Layer parts</label>
+              <label class="checkbox-line"><input id="bundleReplaceExisting" type="checkbox" checked /> Replace existing shards on import</label>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="exportBundleBtn" type="button">Export Bundle</button>
+            <button id="importBundleBtn" class="secondary" type="button">Import Bundle</button>
+            <button id="inspectBundleBtn" class="secondary" type="button">Inspect Bundle</button>
+            <button id="stopBundleBtn" class="secondary" type="button" disabled>Stop</button>
+          </div>
+          <div id="bundleJobStatus" class="job-status muted">No bundle job</div>
+          <div class="progress-wrap"><div id="bundleProgressBar" class="progress-bar" style="width:0%"></div></div>
+          <div id="bundleSummary" class="summary-grid compact result-summary"></div>
+          <details class="job-log-box">
+            <summary>Bundle Logs</summary>
+            <pre id="bundleJobLogs" class="mini-log">No logs.</pre>
+          </details>
+        </div>
+
+        <div class="card">
+          <div class="row-between card-title-row">
+            <div>
+              <h2>Inventory</h2>
+            </div>
+            <button id="deleteSelectedBtn" class="secondary danger-text">Delete Selected</button>
+          </div>
+          <div class="table-toolbar multi-toolbar">
+            <input id="inventorySearch" placeholder="Search symbol" />
+            <select id="inventoryFreqFilter">
+              <option value="">All frequencies</option>
+              <option value="5min">5min</option>
+              <option value="15min">15min</option>
+              <option value="30min">30min</option>
+              <option value="60min">60min</option>
+              <option value="daily">daily</option>
+              <option value="weekly">weekly</option>
+              <option value="monthly">monthly</option>
+            </select>
+            <select id="inventoryAdjustFilter">
+              <option value="">All adjustments</option>
+              <option value="pre">pre</option>
+              <option value="none">none</option>
+              <option value="post">post</option>
+            </select>
+            <div class="segmented-control inventory-mode-control">
+              <button type="button" data-inventory-mode="group" class="active">Grouped</button>
+              <button type="button" data-inventory-mode="slice">Slices</button>
+            </div>
+          </div>
+          <div class="table-wrap inventory-scroll">
+            <table>
+              <thead id="inventoryTableHead">
+                <tr>
+              <th><input id="selectAllInventory" type="checkbox" /></th>
+              <th>Symbol</th>
+              <th>Freq / Adjust</th>
+              <th>Rows</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="inventoryTableBody"><tr><td colspan="7" class="muted">No data.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <h2>Coverage Check</h2>
+            <div class="form-grid one">
+              <label>Symbols File<input id="coverageSymbolsFile" value="config/universe/candidates.txt" /></label>
+              <label>Minimum Rows<input id="coverageMinRows" type="number" value="20" /></label>
+              <label>Required Start<input id="coverageRequiredStart" type="date" /></label>
+              <label>Required End<input id="coverageRequiredEnd" type="date" /></label>
+              <label>CSV Output<input id="coverageOutput" value="runtime_layer/reports/coverage_dashboard_report.csv" /></label>
+            </div>
+            <div class="actions"><button id="checkCoverageBtn">Check Coverage</button></div>
+            <div id="coverageSummary" class="summary-grid compact result-summary"></div>
+            <div class="table-wrap compact-scroll">
+              <table><thead><tr><th>Symbol</th><th>Available</th><th>Rows</th><th>Start</th><th>End</th></tr></thead><tbody id="coverageTableBody"><tr><td colspan="5" class="muted">No results.</td></tr></tbody></table>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Available Universe</h2>
+            <div class="form-grid one">
+              <label>Candidate File<input id="universeCandidates" value="config/universe/candidates.txt" /></label>
+              <label>Output File<input id="universeOutput" value="config/universe/available_universe.txt" /></label>
+              <label>CSV Report<input id="universeReport" value="runtime_layer/reports/available_universe_dashboard_report.csv" /></label>
+              <label>Minimum Rows<input id="universeMinRows" type="number" value="20" /></label>
+              <label>Required Start<input id="universeRequiredStart" type="date" /></label>
+              <label>Required End<input id="universeRequiredEnd" type="date" /></label>
+            </div>
+            <div class="actions"><button id="buildUniverseBtn">Build Universe</button></div>
+            <div id="universeSummary" class="summary-grid compact result-summary"></div>
+            <div class="table-wrap compact-scroll">
+              <table><thead><tr><th>Symbol</th><th>Available</th><th>Rows</th><th>Start</th><th>End</th></tr></thead><tbody id="universeTableBody"><tr><td colspan="5" class="muted">No results.</td></tr></tbody></table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="feature" class="page">
+        <div class="page-header">
+          <h1>Feature Layer</h1>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <h2>Dataset Builder</h2>
+            <div class="form-grid two-cols">
+              <label>Database
+                <input id="featureDbPath" value="runtime_layer/data" />
+              </label>
+              <label>Symbols File
+                <input id="featureSymbolsFile" value="config/universe/available_universe.txt" />
+              </label>
+              <label>Adjust
+                <select id="featureAdjust">
+                  <option value="none">none</option>
+                  <option value="pre" selected>pre</option>
+                  <option value="post">post</option>
+                </select>
+              </label>
+              <label>Trade Frequency
+                <select id="featureTradeFreq">
+                  <option value="5min" selected>5min</option>
+                </select>
+              </label>
+              <label>Start Date
+                <input id="featureStart" type="date" />
+              </label>
+              <label>End Date
+                <input id="featureEnd" type="date" />
+              </label>
+              <label>Max Decisions
+                <input id="featureMaxDecisions" type="number" min="0" step="1" value="0" />
+              </label>
+              <label>Build Chunk Size
+                <input id="featureBuildChunkSize" type="number" min="1" max="256" step="1" value="16" />
+              </label>
+              <label>Build Workers
+                <input id="featureBuildWorkers" type="number" min="1" max="64" step="1" value="10" />
+              </label>
+              <label class="checkbox-line"><input id="featureLowMemory" type="checkbox" checked /> Low memory mode</label>
+              <label class="checkbox-line"><input id="featureMarketParquetCache" type="checkbox" checked /> Market parquet cache</label>
+              <label class="checkbox-line"><input id="featureForceMarketParquetCache" type="checkbox" /> Rebuild market cache</label>
+              <label class="checkbox-line"><input id="featureIncrementalBuild" type="checkbox" checked /> Incremental build</label>
+              <label class="checkbox-line"><input id="featureForceRebuildParts" type="checkbox" /> Force rebuild feature parts</label>
+              <label class="checkbox-line"><input id="featureOpenAuction" type="checkbox" checked /> Open auction decision</label>
+              <label class="span-2">Market Cache Directory
+                <input id="featureMarketParquetCacheRoot" value="runtime_layer/data/market_parquet_cache" />
+              </label>
+              <label class="span-2">Output Directory
+                <input id="featureOutputDir" value="runtime_layer/reports/feature_dataset" />
+              </label>
+              <div class="span-2 form-block">
+                <div class="field-label">Available Frequencies / Enabled for This Dataset</div>
+                <div class="checkbox-grid">
+                  <label class="checkbox-line no-margin"><input class="featureFreq" type="checkbox" value="5min" checked /> 5min</label>
+                  <label class="checkbox-line no-margin"><input class="featureFreq" type="checkbox" value="15min" /> 15min</label>
+                  <label class="checkbox-line no-margin"><input class="featureFreq" type="checkbox" value="30min" checked /> 30min</label>
+                  <label class="checkbox-line no-margin"><input class="featureFreq" type="checkbox" value="60min" /> 60min</label>
+                  <label class="checkbox-line no-margin"><input class="featureFreq" type="checkbox" value="daily" checked /> daily</label>
+                  <label class="checkbox-line no-margin"><input class="featureFreq" type="checkbox" value="weekly" checked /> weekly</label>
+                  <label class="checkbox-line no-margin"><input class="featureFreq" type="checkbox" value="monthly" /> monthly</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Sequence Windows</h2>
+            <div class="form-grid two-cols">
+              <label>5min<input class="featureWindow" data-freq="5min" type="number" min="1" value="96" /></label>
+              <label>15min<input class="featureWindow" data-freq="15min" type="number" min="1" value="64" /></label>
+              <label>30min<input class="featureWindow" data-freq="30min" type="number" min="1" value="48" /></label>
+              <label>60min<input class="featureWindow" data-freq="60min" type="number" min="1" value="32" /></label>
+              <label>daily<input class="featureWindow" data-freq="daily" type="number" min="1" value="60" /></label>
+              <label>weekly<input class="featureWindow" data-freq="weekly" type="number" min="1" value="26" /></label>
+              <label>monthly<input class="featureWindow" data-freq="monthly" type="number" min="1" value="12" /></label>
+            </div>
+            <div class="actions">
+              <button id="preflightFeatureDatasetBtn" class="secondary" type="button">Preflight</button>
+              <button id="previewFeatureDatasetBtn" class="secondary" type="button">Preview</button>
+              <button id="buildFeatureDatasetBtn" type="button">Build Feature Dataset</button>
+              <button id="stopFeatureDatasetBtn" class="secondary" type="button" disabled>Stop</button>
+            </div>
+            <div id="featurePreflightStatus" class="job-status muted">Preflight Status: idle</div>
+            <div id="featurePreflightSummary" class="summary-grid compact result-summary"></div>
+            <div class="table-wrap compact-scroll">
+              <table>
+                <thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead>
+                <tbody id="featurePreflightTableBody"><tr><td colspan="3" class="muted">Run preflight before building.</td></tr></tbody>
+              </table>
+            </div>
+            <details class="job-log-box">
+              <summary>Dataset Preview</summary>
+              <div class="muted" id="featurePreviewNote">No preview.</div>
+              <div class="table-wrap compact-scroll">
+                <table>
+                  <thead><tr><th>Decision Time</th><th>Stage</th><th>Symbol</th><th>Execution</th><th>Market Rule</th><th>Visible Bar</th><th>Market Rows</th></tr></thead>
+                  <tbody id="featurePreviewTableBody"><tr><td colspan="7" class="muted">No preview.</td></tr></tbody>
+                </table>
+              </div>
+            </details>
+            <div id="featureJobStatus" class="job-status muted">Build Status: idle</div>
+            <div class="progress-wrap"><div id="featureProgressBar" class="progress-bar" style="width:0%"></div></div>
+            <div id="featureSummary" class="summary-grid compact result-summary"></div>
+            <details class="job-log-box">
+              <summary>Feature Logs</summary>
+              <pre id="featureJobLogs" class="mini-log">No logs.</pre>
+            </details>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-heading-row">
+            <div>
+              <h2>Indicator Configuration</h2>
+              <div id="featureIndicatorConfigPath" class="muted"></div>
+            </div>
+            <div class="actions no-margin">
+              <button id="addFeatureIndicatorBtn" class="secondary" type="button">Add Indicator</button>
+              <button id="saveFeatureIndicatorsBtn" type="button">Save Indicators</button>
+            </div>
+          </div>
+          <div id="featureIndicatorEditor" class="indicator-editor-grid"></div>
+          <div id="featureIndicatorConfigStatus" class="muted"></div>
+        </div>
+
+        <div class="card">
+          <h2>Feature Contract</h2>
+          <div id="featureContractSummary" class="summary-grid compact result-summary"></div>
+          <div class="feature-note-grid" id="featureFrequencyPolicy"></div>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <h2>Indicator Details</h2>
+            <div class="table-wrap compact-scroll">
+              <table>
+                <thead><tr><th>Name</th><th>Included</th><th>Outputs</th><th>Formula</th></tr></thead>
+                <tbody id="featureIndicatorTableBody"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <h2>Trading Rule Inputs</h2>
+            <div class="table-wrap compact-scroll">
+              <table>
+                <thead><tr><th>Rule</th><th>Value</th><th>Note</th></tr></thead>
+                <tbody id="featureRuleTableBody"><tr><td colspan="3" class="muted">Loading...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card model-input-card">
+          <div class="section-heading-row">
+            <div>
+              <h2>Model Input Blueprint</h2>
+              <div id="modelInputBlueprintPath" class="muted">Loading...</div>
+            </div>
+            <div class="actions no-margin model-input-actions">
+              <button id="addModelInputFeatureBtn" class="secondary" type="button">Add Feature</button>
+              <button id="addModelInputGroupBtn" class="secondary" type="button">Add Group</button>
+              <button id="addModelInputCommentBtn" class="secondary" type="button">Add Comment</button>
+              <button id="resetModelInputBlueprintBtn" class="secondary" type="button">Reset Default</button>
+              <button id="saveModelInputBlueprintBtn" type="button">Save Blueprint</button>
+            </div>
+          </div>
+          <div id="modelInputSummary" class="summary-grid compact result-summary"></div>
+          <div id="modelInputStatus" class="muted"></div>
+          <div id="modelInputValidation" class="model-input-validation"></div>
+          <div id="modelInputList" class="model-input-list"><div class="muted">Loading blueprint...</div></div>
+          <div id="modelInputCatalog" class="model-input-catalog hidden">
+            <div class="model-input-catalog-head">
+              <label>Search<input id="modelInputCatalogSearch" placeholder="pctChg / MACD / constraint..." /></label>
+              <button id="closeModelInputCatalogBtn" class="secondary small" type="button">Close</button>
+            </div>
+            <div id="modelInputCatalogGroups"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Quality & Debug Outputs</h2>
+          <div class="table-wrap compact-scroll">
+            <table>
+              <thead><tr><th>File</th><th>Grain</th><th>Columns</th></tr></thead>
+              <tbody id="featureFormatTableBody"><tr><td colspan="3" class="muted">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      <section id="agent" class="page">
+        <div class="page-header row-between">
+          <div><h1>Agent Layer</h1><p>Configure, run, and monitor persistent single-stock training.</p></div>
+          <button id="agentPopoutBtn" class="secondary" type="button">Open Monitor Window</button>
+        </div>
+        <div class="agent-tabs" role="tablist">
+          <button class="agent-tab active" data-agent-tab="setup" type="button">Setup</button>
+          <button class="agent-tab" data-agent-tab="monitor" type="button">Live Monitor</button>
+          <button class="agent-tab" data-agent-tab="runs" type="button">Runs &amp; Checkpoints</button>
+        </div>
+
+        <div id="agentTabSetup" class="agent-tab-panel active">
+          <div class="grid two">
+            <div class="card">
+              <h2>Run Setup</h2>
+              <div class="form-grid two-cols">
+                <label>Profile<select id="agentProfile" class="agent-config-input"><option value="smoke">Smoke</option><option value="formal">Formal</option><option value="custom">Custom</option></select></label>
+                <label>Run Name<input id="agentRunName" class="agent-config-input" placeholder="Optional label" /></label>
+                <label class="span-2">Training Dataset <small>Feature Dataset or Agent Cache.</small><input id="agentStorePath" class="agent-config-input" value="runtime_layer/reports/feature_dataset" /></label>
+                <label class="span-2">Symbols File <small>Leave empty for all dataset symbols.</small><input id="agentSymbolsFile" class="agent-config-input" value="config/universe/smoke_symbols.txt" /></label>
+                <label>Symbol Limit<input id="agentSymbolLimit" class="agent-config-input" type="number" min="0" value="0" /></label>
+                <label>Symbol Sample Seed<input id="agentSymbolSeed" class="agent-config-input" type="number" value="42" /></label>
+                <label>Walk-forward Fold<select id="agentFold" class="agent-config-input"><option value="1">Fold 1</option><option value="2">Fold 2</option><option value="3" selected>Fold 3</option></select></label>
+                <label>Device<select id="agentDevice" class="agent-config-input"><option value="cuda">CUDA</option><option value="cpu">CPU</option></select></label>
+                <label>Parallel Envs<input id="agentParallelEnvs" class="agent-config-input" type="number" min="1" value="1" /></label>
+                <label>Total Steps<input id="agentTotalSteps" class="agent-config-input" type="number" min="1" step="128" value="128" /></label>
+                <label>Episode Days<input id="agentEpisodeDays" class="agent-config-input" type="number" min="1" value="5" /></label>
+                <label>Validation Days<input id="agentValidationDays" class="agent-config-input" type="number" min="1" value="5" /></label>
+                <label>Seed<input id="agentSeed" class="agent-config-input" type="number" value="42" /></label>
+                <label class="checkbox-line"><input id="agentUseCache" class="agent-config-input" type="checkbox" checked /> Use Agent Cache</label>
+                <div class="span-2 form-block">
+                  <div class="field-label">Training Frequencies</div>
+                  <div id="agentFrequencyChoices" class="checkbox-grid">
+                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="5min" checked /> 5min</label>
+                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="15min" checked /> 15min</label>
+                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="30min" checked /> 30min</label>
+                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="60min" checked /> 60min</label>
+                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="daily" checked /> Daily</label>
+                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="weekly" checked /> Weekly</label>
+                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="monthly" /> Monthly</label>
+                  </div>
+                  <div class="help-text">Uncheck a frequency to exclude it. If none are checked, the Agent uses every frequency embedded in the Feature Dataset.</div>
+                </div>
+                <label class="span-2">Model Output Directory<input id="agentOutputDir" class="agent-config-input" value="runtime_layer/models/agent" /></label>
+              </div>
+            </div>
+            <div class="card">
+              <h2>Agent Cache</h2>
+              <p class="help-text">Build an index-based Agent cache from the current Feature Dataset before training. It stores per-symbol feature matrices and decision indices, not expanded windows.</p>
+              <div class="form-grid two-cols">
+                <label class="span-2">Source Feature Dataset<input id="agentCacheFeatureDir" value="runtime_layer/reports/feature_dataset" /></label>
+                <label class="span-2">Output Cache<input id="agentCacheOutputDir" value="runtime_layer/agent_cache/full" /></label>
+                <label class="span-2">Symbols File<input id="agentCacheSymbolsFile" value="" placeholder="Blank = all symbols in Feature Dataset" /></label>
+                <label>Workers<input id="agentCacheWorkers" type="number" min="1" value="4" /></label>
+                <label>Max Decisions / Symbol<input id="agentCacheMaxDecisions" type="number" min="0" value="0" /><small>0 means full cache.</small></label>
+                <label class="checkbox-line"><input id="agentCacheReset" type="checkbox" checked /> Reset output before build</label>
+              </div>
+              <div class="actions no-top"><button id="buildAgentCacheBtn" type="button">Build Agent Cache</button><button id="stopAgentCacheBtn" class="secondary danger-text" type="button" disabled>Stop Cache Build</button><button id="inspectAgentCacheBtn" class="secondary" type="button">Inspect Cache</button><button id="useAgentCachePathBtn" class="secondary" type="button">Use Cache for Training</button></div>
+              <div id="agentCacheStatus" class="job-status muted">Agent Cache Status: idle</div>
+              <div class="progress-wrap"><div id="agentCacheProgressBar" class="progress-bar" style="width:0%"></div></div>
+              <div id="agentCacheSummary" class="summary-grid compact result-summary"></div>
+              <div class="table-wrap compact-scroll"><table><thead><tr><th>Symbol</th><th>Decisions</th><th>Range</th><th>Shapes</th></tr></thead><tbody id="agentCacheTableBody"><tr><td colspan="4" class="muted">Build or inspect a cache.</td></tr></tbody></table></div>
+            </div>
+
+            <div class="card">
+              <h2>Frozen Agent v1 Contract</h2>
+              <div id="agentContractSummary" class="summary-grid compact result-summary"></div>
+              <div class="table-wrap compact-scroll"><table><thead><tr><th>Section</th><th>Setting</th><th>Value</th></tr></thead><tbody id="agentContractTableBody"><tr><td colspan="3" class="muted">Loading...</td></tr></tbody></table></div>
+            </div>
+          </div>
+
+          <div class="card agent-parameter-card">
+            <h2>Training Parameters</h2>
+            <details open><summary>PPO Optimization</summary><div class="form-grid parameter-grid">
+              <label>Learning Rate<input id="agentLearningRate" class="agent-config-input" type="number" step="0.000001" value="0.00007" /></label>
+              <label>Final Learning Rate<input id="agentFinalLearningRate" class="agent-config-input" type="number" step="0.000001" value="0.000007" /></label>
+              <label>Gamma<input id="agentGamma" class="agent-config-input" type="number" step="0.0001" value="0.9995" /></label>
+              <label>GAE Lambda<input id="agentGaeLambda" class="agent-config-input" type="number" step="0.001" value="0.995" /></label>
+              <label>Rollout Steps<input id="agentRolloutSteps" class="agent-config-input" type="number" min="1" value="128" /></label>
+              <label>Minibatch Size<input id="agentMinibatchSize" class="agent-config-input" type="number" min="1" value="8" /></label>
+              <label>Update Epochs<input id="agentUpdateEpochs" class="agent-config-input" type="number" min="1" value="10" /></label>
+              <label>Clip Ratio<input id="agentClipRatio" class="agent-config-input" type="number" step="0.01" value="0.2" /></label>
+              <label>Value Clip<input id="agentValueClip" class="agent-config-input" type="number" step="0.01" value="0.2" /></label>
+              <label>Value Coefficient<input id="agentValueCoefficient" class="agent-config-input" type="number" step="0.01" value="0.5" /></label>
+              <label>Entropy Coefficient<input id="agentEntropyCoefficient" class="agent-config-input" type="number" step="0.001" value="0.01" /></label>
+              <label>Max Gradient Norm<input id="agentMaxGradientNorm" class="agent-config-input" type="number" step="0.05" value="0.5" /></label>
+              <label>Target KL<input id="agentTargetKl" class="agent-config-input" type="number" step="0.005" value="0.02" /></label>
+            </div></details>
+            <details><summary>Model Capacity</summary><div class="form-grid parameter-grid">
+              <label>Input Projection<input id="agentInputProjection" class="agent-config-input" type="number" min="1" value="64" /></label>
+              <label>LSTM Hidden<input id="agentLstmHidden" class="agent-config-input" type="number" min="1" value="128" /></label>
+              <label>LSTM Layers<input id="agentLstmLayers" class="agent-config-input" type="number" min="1" value="2" /></label>
+              <label>Fused Market<input id="agentFusedMarket" class="agent-config-input" type="number" min="1" value="128" /></label>
+              <label>Context Embedding<input id="agentContextEmbedding" class="agent-config-input" type="number" min="1" value="32" /></label>
+              <label>Runtime Embedding<input id="agentRuntimeEmbedding" class="agent-config-input" type="number" min="1" value="32" /></label>
+              <label>Local State<input id="agentLocalState" class="agent-config-input" type="number" min="1" value="128" /></label>
+              <label>Global State<input id="agentGlobalState" class="agent-config-input" type="number" min="1" value="128" /></label>
+              <label>Dropout<input id="agentDropout" type="number" value="0" disabled /><small>Fixed at zero for PPO likelihood consistency.</small></label>
+            </div></details>
+            <details><summary>Execution &amp; Costs</summary><div class="form-grid parameter-grid">
+              <label>Initial Cash<input id="agentInitialCash" class="agent-config-input" type="number" min="1" value="1000000" /></label>
+              <label>Lot Size<input id="agentLotSize" class="agent-config-input" type="number" min="1" value="100" /></label>
+              <label>Max Position Ratio<input id="agentMaxPosition" class="agent-config-input" type="number" step="0.01" value="0.2" /></label>
+              <label>Bar Participation<input id="agentBarParticipation" class="agent-config-input" type="number" step="0.01" value="0.1" /></label>
+              <label>Auction Participation<input id="agentAuctionParticipation" class="agent-config-input" type="number" step="0.01" value="0.02" /></label>
+              <label>Commission Rate<input id="agentCommission" class="agent-config-input" type="number" step="0.00001" value="0.0003" /></label>
+              <label>Minimum Commission<input id="agentMinimumCommission" class="agent-config-input" type="number" step="0.1" value="5" /></label>
+              <label>Stamp Duty<input id="agentStampDuty" class="agent-config-input" type="number" step="0.00001" value="0.0005" /></label>
+              <label>Transfer Fee<input id="agentTransferFee" class="agent-config-input" type="number" step="0.000001" value="0.00001" /></label>
+              <label>Base Slippage<input id="agentBaseSlippage" class="agent-config-input" type="number" step="0.00001" value="0.0002" /></label>
+              <label>Impact Coefficient<input id="agentImpactCoefficient" class="agent-config-input" type="number" step="0.0001" value="0.001" /></label>
+              <label>Maximum Slippage<input id="agentMaximumSlippage" class="agent-config-input" type="number" step="0.0001" value="0.005" /></label>
+              <label>Holding Bar Cap<input id="agentHoldingBarCap" class="agent-config-input" type="number" min="1" value="1000" /></label>
+            </div></details>
+            <details><summary>Reward</summary><p class="help-text agent-formula">scale * (log(NAV after / NAV before) - hurdle accrual) - drawdown penalty - turnover penalty - invalid-action penalty</p><div class="form-grid parameter-grid">
+              <label>Reward Kind<input value="Net NAV log return" disabled /></label>
+              <label>Scale<input id="agentRewardScale" class="agent-config-input" type="number" step="0.1" value="1" /></label>
+              <label>Annual Hurdle Rate<input id="agentHurdleRate" class="agent-config-input" type="number" step="0.0001" value="0" /><small>Risk-free benchmark, e.g. 0.015 for 1.5%.</small></label>
+              <label>Drawdown Penalty<input id="agentDrawdownPenalty" class="agent-config-input" type="number" step="0.01" value="0" /></label>
+              <label>Turnover Penalty<input id="agentTurnoverPenalty" class="agent-config-input" type="number" step="0.01" value="0" /></label>
+              <label>Invalid Action Penalty<input id="agentInvalidPenalty" class="agent-config-input" type="number" step="0.01" value="0" /></label>
+            </div></details>
+            <details><summary>Checkpoint &amp; Validation Schedule</summary><div class="form-grid parameter-grid">
+              <label>Checkpoint Every Updates<input id="agentCheckpointInterval" class="agent-config-input" type="number" min="1" value="5" /></label>
+              <label>Validate Every Updates<input id="agentValidationInterval" class="agent-config-input" type="number" min="0" value="50" /></label>
+              <label>Keep Last<input id="agentKeepLast" class="agent-config-input" type="number" min="1" value="5" /></label>
+              <label>Best Metric<select id="agentBestMetric" class="agent-config-input"><option value="sharpe">Sharpe</option><option value="calmar">Calmar</option><option value="total_return">Total Return</option></select></label>
+              <label>Validation Symbols<input id="agentValidationSymbolLimit" class="agent-config-input" type="number" min="1" value="5" /></label>
+              <label>Validation Sample Seed<input id="agentValidationSymbolSeed" class="agent-config-input" type="number" value="2026" /></label>
+              <label>Quick Validation Days<input id="agentQuickValidationDays" class="agent-config-input" type="number" min="1" value="5" /></label>
+              <label>Periodic Validation Device<select id="agentPeriodicValidationDevice" class="agent-config-input"><option value="cpu">CPU</option><option value="cuda">CUDA</option><option value="auto">Auto</option></select></label>
+              <label>Final Validation Device<select id="agentFinalValidationDevice" class="agent-config-input"><option value="auto">Auto</option><option value="cuda">CUDA</option><option value="cpu">CPU</option></select></label>
+            </div></details>
+          </div>
+
+          <div class="card">
+            <div class="actions agent-primary-actions"><button id="agentPreflightBtn" class="secondary" type="button">Preflight</button><button id="startAgentTrainingBtn" type="button">Start Training</button></div>
+            <div id="agentPreflightStatus" class="job-status muted">Preflight Status: idle</div>
+            <div id="agentPreflightSummary" class="summary-grid compact result-summary"></div>
+            <div class="table-wrap compact-scroll"><table><thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead><tbody id="agentPreflightTableBody"><tr><td colspan="3" class="muted">Run preflight before training.</td></tr></tbody></table></div>
+          </div>
+        </div>
+
+        <div id="agentTabMonitor" class="agent-tab-panel">
+          <div class="card">
+            <div class="row-between"><div><h2>Live Training</h2><div id="agentJobStatus" class="job-status muted">Training Status: idle</div></div><div class="actions no-top"><button id="pauseAgentRunBtn" class="secondary" type="button" disabled>Pause</button><button id="resumeAgentRunBtn" class="secondary" type="button" disabled>Resume</button><button id="checkpointAgentRunBtn" class="secondary" type="button" disabled>Save Now</button><button id="stopAgentTrainingBtn" class="secondary danger-text" type="button" disabled>Stop</button></div></div>
+            <div class="progress-wrap"><div id="agentProgressBar" class="progress-bar" style="width:0%"></div></div>
+            <div id="agentTrainingSummary" class="summary-grid compact result-summary"></div>
+            <div id="agentValidationStatus" class="job-status muted agent-validation-status">Validation Status: idle</div>
+            <div class="progress-wrap"><div id="agentValidationProgressBar" class="progress-bar validation-progress" style="width:0%"></div></div>
+          </div>
+          <div class="agent-metric-sections">
+            <section class="agent-metric-section" data-agent-chart-group="progress">
+              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="progress"><span>Training Progress</span><span class="agent-section-caret">▾</span></button>
+              <div class="agent-chart-grid agent-metric-section-body">
+                <div class="agent-chart-panel"><h3>Cumulative Training Steps</h3><canvas id="agentStepsChart" class="agent-metric-chart" data-agent-chart-id="agentStepsChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentStepsChart"></div></div>
+                <div class="agent-chart-panel"><h3>Training Speed</h3><canvas id="agentSpeedChart" class="agent-metric-chart" data-agent-chart-id="agentSpeedChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentSpeedChart"></div></div>
+              </div>
+            </section>
+            <section class="agent-metric-section" data-agent-chart-group="hardware">
+              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="hardware"><span>Hardware Performance</span><span class="agent-section-caret">▾</span></button>
+              <div class="agent-chart-grid agent-metric-section-body">
+                <div class="agent-chart-panel"><h3>Hardware Usage</h3><canvas id="agentHardwareChart" class="agent-metric-chart" data-agent-chart-id="agentHardwareChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentHardwareChart"></div></div>
+                <div class="agent-chart-panel"><h3>Time Breakdown</h3><canvas id="agentLatencyChart" class="agent-metric-chart" data-agent-chart-id="agentLatencyChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentLatencyChart"></div></div>
+              </div>
+            </section>
+            <section class="agent-metric-section" data-agent-chart-group="trading">
+              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="trading"><span>Trading Performance</span><span class="agent-section-caret">▾</span></button>
+              <div class="agent-chart-grid agent-metric-section-body">
+                <div class="agent-chart-panel"><h3>Reward & Asset</h3><canvas id="agentRewardChart" class="agent-metric-chart" data-agent-chart-id="agentRewardChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentRewardChart"></div></div>
+                <div class="agent-chart-panel"><h3>Actions & Costs</h3><canvas id="agentActionChart" class="agent-metric-chart" data-agent-chart-id="agentActionChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentActionChart"></div></div>
+              </div>
+            </section>
+            <section class="agent-metric-section" data-agent-chart-group="algorithm">
+              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="algorithm"><span>Algorithm Learning</span><span class="agent-section-caret">▾</span></button>
+              <div class="agent-chart-grid agent-metric-section-body">
+                <div class="agent-chart-panel"><h3>Loss</h3><canvas id="agentLossChart" class="agent-metric-chart" data-agent-chart-id="agentLossChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentLossChart"></div></div>
+                <div class="agent-chart-panel"><h3>PPO Health</h3><canvas id="agentPolicyChart" class="agent-metric-chart" data-agent-chart-id="agentPolicyChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentPolicyChart"></div></div>
+              </div>
+            </section>
+            <section class="agent-metric-section" data-agent-chart-group="validation">
+              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="validation"><span>Validation Evaluation</span><span class="agent-section-caret">▾</span></button>
+              <div class="agent-chart-grid agent-metric-section-body">
+                <div class="agent-chart-panel"><h3>Validation Return</h3><canvas id="agentValidationReturnChart" class="agent-metric-chart" data-agent-chart-id="agentValidationReturnChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentValidationReturnChart"></div></div>
+                <div class="agent-chart-panel"><h3>Validation Risk</h3><canvas id="agentValidationRiskChart" class="agent-metric-chart" data-agent-chart-id="agentValidationRiskChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentValidationRiskChart"></div></div>
+              </div>
+            </section>
+          </div>
+          <div class="grid two">
+            <div class="card"><h2>Latest Telemetry</h2><div id="agentTelemetrySummary" class="summary-grid compact result-summary"></div></div>
+            <div class="card"><h2>Validation</h2><div id="agentValidationSummary" class="summary-grid compact result-summary"></div></div>
+          </div>
+          <div class="card"><details class="job-log-box" open><summary>Agent Logs</summary><pre id="agentJobLogs" class="mini-log">No logs yet.</pre></details></div>
+        </div>
+
+        <div id="agentTabRuns" class="agent-tab-panel">
+          <div class="card"><div class="row-between"><h2>Training Runs</h2><button id="refreshAgentRunsBtn" class="secondary" type="button">Refresh</button></div><div class="table-wrap agent-runs-scroll"><table><thead><tr><th>Run</th><th>Training</th><th>Validation</th><th>Progress</th><th>Steps</th><th>Updated</th><th>Action</th></tr></thead><tbody id="agentRunsTableBody"><tr><td colspan="7" class="muted">No runs loaded.</td></tr></tbody></table></div></div>
+          <div class="card"><h2>Checkpoints</h2><div class="placeholder-panel compact-placeholder">Use Manage on a run to view its checkpoint list. Export to Evaluation is reserved for the Evaluation Layer integration.</div></div>
+        </div>
+      </section>
+      <section id="evaluation" class="page">
+        <div class="page-header"><h1>Evaluation Layer</h1></div>
+        <div class="grid two">
+          <div class="card">
+            <h2>Start Evaluation</h2>
+            <div class="form-grid two-cols">
+              <label>Evaluation Model<select id="evaluationModelSelect"></select></label>
+              <label>Feature Dataset<input id="evaluationFeatureDataset" value="runtime_layer/reports/feature_dataset" /></label>
+              <label>Symbol<input id="evaluationSymbol" placeholder="000001.SZ" /></label>
+              <label>Device<select id="evaluationDevice"><option value="cpu">CPU</option><option value="cuda">CUDA</option></select></label>
+              <label>Start Date<input id="evaluationStart" type="date" /></label>
+              <label>End Date<input id="evaluationEnd" type="date" /></label>
+              <label>Initial Cash<input id="evaluationInitialCash" type="number" min="1" value="1000000" /></label>
+              <label>Lot Size<input id="evaluationLotSize" type="number" min="1" value="100" /></label>
+              <label>Max Position Ratio<input id="evaluationMaxPosition" type="number" step="0.01" value="0.2" /></label>
+              <label>Commission Rate<input id="evaluationCommission" type="number" step="0.00001" value="0.0003" /></label>
+              <label>Base Slippage<input id="evaluationSlippage" type="number" step="0.00001" value="0.0002" /></label>
+              <label>Minimum Commission<input id="evaluationMinCommission" type="number" step="0.1" value="5" /></label>
+            </div>
+            <div class="actions">
+              <button id="refreshEvaluationModelsBtn" class="secondary" type="button">Refresh Models</button>
+              <button id="startEvaluationBtn" type="button">Start Evaluation</button>
+              <button id="stopEvaluationBtn" class="secondary danger-text" type="button" disabled>Stop Evaluation</button>
+            </div>
+            <div id="evaluationStartStatus" class="muted">Export a model from Agent first, then start a single-symbol evaluation.</div>
+          </div>
+          <div class="card">
+            <h2>Model Pool</h2>
+            <div class="table-wrap compact-scroll"><table><thead><tr><th>Name</th><th>Source</th><th>Step</th><th>Exported</th></tr></thead><tbody id="evaluationModelsTableBody"><tr><td colspan="4" class="muted">No exported models.</td></tr></tbody></table></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="row-between"><h2>Evaluation Runs</h2><button id="refreshEvaluationRunsBtn" class="secondary" type="button">Refresh Runs</button></div>
+          <div class="table-wrap compact-scroll"><table><thead><tr><th>Run</th><th>Model</th><th>Symbol</th><th>Status</th><th>Return</th><th>Drawdown</th><th>Updated</th><th>Action</th></tr></thead><tbody id="evaluationRunsTableBody"><tr><td colspan="8" class="muted">No evaluation runs.</td></tr></tbody></table></div>
+        </div>
+      </section>
+      <section id="live" class="page"><div class="page-header"><h1>Live Layer</h1></div><div class="empty-card">Live Layer is coming soon.</div></section>
+      <section id="config" class="page">
+        <div class="page-header">
+          <h1>Config</h1>
+        </div>
+
+        <div class="grid two">
+          <div class="card">
+            <h2>Symbol Universe</h2>
+            <div class="form-grid one">
+              <label>Universe File
+                <select id="configUniversePreset">
+                  <option value="config/universe/download_symbols.txt">download_symbols.txt</option>
+                  <option value="config/universe/candidates.txt">candidates.txt</option>
+                  <option value="config/universe/available_universe.txt">available_universe.txt</option>
+                </select>
+              </label>
+              <label>File Path
+                <input id="configUniversePath" value="config/universe/download_symbols.txt" />
+              </label>
+              <label>Symbols
+                <textarea id="configSymbolsText" rows="14" placeholder="000001.SZ&#10;600000.SH"></textarea>
+              </label>
+            </div>
+            <div class="actions">
+              <button id="loadConfigSymbolsBtn" type="button" class="secondary">Load</button>
+              <button id="saveConfigSymbolsBtn" type="button">Save</button>
+              <button id="setDownloadSymbolsBtn" type="button" class="secondary">Use For Download</button>
+            </div>
+            <div id="configSymbolsStatus" class="muted config-status">No symbol file loaded.</div>
+          </div>
+
+          <div class="card">
+            <h2>Data Defaults</h2>
+            <div class="form-grid two-cols">
+              <label>Database
+                <input id="configDefaultDbPath" value="runtime_layer/data" />
+              </label>
+              <label>Request Sleep
+                <input id="configDefaultSleep" type="number" min="0" step="0.1" value="0.5" />
+              </label>
+              <label>Start Date
+                <input id="configDefaultStart" type="date" value="2024-01-01" />
+              </label>
+              <label>End Date
+                <input id="configDefaultEnd" type="date" value="2024-01-31" />
+              </label>
+              <div class="span-2 form-block">
+                <div class="field-label">Default Frequencies</div>
+                <div class="checkbox-grid">
+                  <label class="checkbox-line no-margin"><input class="configDefaultFreq" type="checkbox" value="5" checked /> 5min</label>
+                  <label class="checkbox-line no-margin"><input class="configDefaultFreq" type="checkbox" value="30" /> 30min</label>
+                  <label class="checkbox-line no-margin"><input class="configDefaultFreq" type="checkbox" value="d" checked /> Daily</label>
+                </div>
+              </div>
+              <div class="span-2 form-block">
+                <div class="field-label">Default Adjust Modes</div>
+                <div class="checkbox-grid">
+                  <label class="checkbox-line no-margin"><input class="configDefaultAdjustflag" type="checkbox" value="3" checked /> None</label>
+                  <label class="checkbox-line no-margin"><input class="configDefaultAdjustflag" type="checkbox" value="2" checked /> Pre</label>
+                  <label class="checkbox-line no-margin"><input class="configDefaultAdjustflag" type="checkbox" value="1" /> Post</label>
+                </div>
+              </div>
+              <label class="checkbox-line"><input id="configDefaultSkipExisting" type="checkbox" checked /> Skip verified completed slices</label>
+              <label class="checkbox-line"><input id="configDefaultReplace" type="checkbox" /> Replace existing symbol rows</label>
+            </div>
+            <div class="actions">
+              <button id="applyConfigDefaultsBtn" type="button">Apply To Download</button>
+            </div>
+            <div class="placeholder-panel compact-placeholder">Persistent YAML editing can be added after the UI flow is stable.</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="detailModal" class="modal hidden">
+    <div class="modal-backdrop" id="detailModalBackdrop"></div>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <div>
+          <h2 id="detailModalTitle">K-line Data</h2>
+          <p id="detailModalSubtitle" class="help-text">-</p>
+        </div>
+        <button id="closeDetailModalBtn" class="secondary">Close</button>
+      </div>
+      <div class="modal-meta-block">
+        <div id="modalSummary" class="summary-grid compact result-summary modal-summary-row"></div>
+        <div class="modal-second-row">
+          <div id="modalDateSummary" class="summary-grid compact result-summary modal-date-row"></div>
+          <label class="modal-freq-control">Frequency<select id="modalFreqSelect"></select></label>
+          <label class="modal-freq-control">Adjust<select id="modalAdjustSelect"></select></label>
+        </div>
+      </div>
+      <div id="modalTableWrap" class="table-wrap modal-table-wrap">
+        <table>
+          <thead id="modalKlineTableHead">
+            <tr>
+              <th>Datetime</th>
+              <th>Open</th>
+              <th>High</th>
+              <th>Low</th>
+              <th>Close</th>
+              <th>Volume</th>
+              <th>Amount</th>
+              <th>PctChg</th>
+            </tr>
+          </thead>
+          <tbody id="modalKlineTableBody"><tr><td colspan="8" class="muted">No rows.</td></tr></tbody>
+        </table>
+      </div>
+      <div id="modalLoadStatus" class="muted modal-load-status">Scroll to load more.</div>
+    </div>
+  </div>
+
+
+  <div id="agentCheckpointModal" class="modal hidden">
+    <div class="modal-backdrop" id="agentCheckpointModalBackdrop"></div>
+    <div class="modal-panel agent-checkpoint-modal-panel">
+      <div class="modal-header">
+        <div>
+          <h2 id="agentCheckpointModalTitle">Run Checkpoints</h2>
+          <p id="agentCheckpointModalSubtitle" class="help-text">-</p>
+        </div>
+        <button id="closeAgentCheckpointModalBtn" class="secondary" type="button">Close</button>
+      </div>
+      <div id="agentCheckpointModalSummary" class="summary-grid compact result-summary modal-summary-row"></div>
+      <div class="modal-table-wrap table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Step</th><th>Reason</th><th>Validation</th><th>Size</th><th>Modified</th><th>Action</th></tr></thead>
+          <tbody id="agentCheckpointModalTableBody"><tr><td colspan="7" class="muted">No checkpoint saved yet.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="agentExportConflictModal" class="modal hidden">
+    <div class="modal-backdrop" id="agentExportConflictBackdrop"></div>
+    <div class="modal-panel compact-modal-panel">
+      <div class="modal-header">
+        <div>
+          <h2>Evaluation Model Exists</h2>
+          <p id="agentExportConflictMessage" class="help-text">Choose how to handle the existing model name.</p>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="agentExportRenameBtn" class="secondary" type="button">Rename</button>
+        <button id="agentExportOverwriteBtn" type="button">Overwrite</button>
+        <button id="agentExportCancelBtn" class="secondary" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=20260630_evaluation_stop"></script>
+</body>
+</html>

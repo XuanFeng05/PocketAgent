@@ -1,0 +1,946 @@
+{
+  "document_version": 1,
+  "schema_version": 1,
+  "items": [
+    {
+      "id": "group_market_price",
+      "type": "group",
+      "label": "Price"
+    },
+    {
+      "id": "feature_market_sequence_pctChg",
+      "type": "feature",
+      "name": "pctChg",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_log_ret",
+      "type": "feature",
+      "name": "log_ret",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_open_close_ret",
+      "type": "feature",
+      "name": "open_close_ret",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_gap_ret",
+      "type": "feature",
+      "name": "gap_ret",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_market_shape",
+      "type": "group",
+      "label": "Shape"
+    },
+    {
+      "id": "feature_market_sequence_high_low_range",
+      "type": "feature",
+      "name": "high_low_range",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_body_range",
+      "type": "feature",
+      "name": "body_range",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_close_position",
+      "type": "feature",
+      "name": "close_position",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_upper_shadow",
+      "type": "feature",
+      "name": "upper_shadow",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_lower_shadow",
+      "type": "feature",
+      "name": "lower_shadow",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_market_trend",
+      "type": "group",
+      "label": "Trend"
+    },
+    {
+      "id": "feature_market_sequence_ret_3",
+      "type": "feature",
+      "name": "ret_3",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ret_5",
+      "type": "feature",
+      "name": "ret_5",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ret_10",
+      "type": "feature",
+      "name": "ret_10",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ret_20",
+      "type": "feature",
+      "name": "ret_20",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_market_volatility",
+      "type": "group",
+      "label": "Volatility"
+    },
+    {
+      "id": "feature_market_sequence_volatility_5",
+      "type": "feature",
+      "name": "volatility_5",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_volatility_20",
+      "type": "feature",
+      "name": "volatility_20",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_range_mean_20",
+      "type": "feature",
+      "name": "range_mean_20",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_market_liquidity",
+      "type": "group",
+      "label": "Liquidity"
+    },
+    {
+      "id": "feature_market_sequence_volume_ratio_20",
+      "type": "feature",
+      "name": "volume_ratio_20",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_amount_ratio_20",
+      "type": "feature",
+      "name": "amount_ratio_20",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_turn_lag1",
+      "type": "feature",
+      "name": "turn_lag1",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_turn_ma20",
+      "type": "feature",
+      "name": "turn_ma20",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_turn_z20",
+      "type": "feature",
+      "name": "turn_z20",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_market_availability",
+      "type": "group",
+      "label": "Availability"
+    },
+    {
+      "id": "feature_market_sequence_history_coverage",
+      "type": "feature",
+      "name": "history_coverage",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_sequence_valid_ratio",
+      "type": "feature",
+      "name": "sequence_valid_ratio",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_market_time",
+      "type": "group",
+      "label": "Time"
+    },
+    {
+      "id": "feature_market_sequence_progress",
+      "type": "feature",
+      "name": "progress",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_market_indicator",
+      "type": "group",
+      "label": "Indicator"
+    },
+    {
+      "id": "feature_market_sequence_macd_dif_pct",
+      "type": "feature",
+      "name": "macd_dif_pct",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_macd_dea_pct",
+      "type": "feature",
+      "name": "macd_dea_pct",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_macd_hist_pct",
+      "type": "feature",
+      "name": "macd_hist_pct",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_kd_k_norm",
+      "type": "feature",
+      "name": "kd_k_norm",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_kd_d_norm",
+      "type": "feature",
+      "name": "kd_d_norm",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_kd_diff_norm",
+      "type": "feature",
+      "name": "kd_diff_norm",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_efi2_norm",
+      "type": "feature",
+      "name": "efi2_norm",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_efi13_norm",
+      "type": "feature",
+      "name": "efi13_norm",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ema_channel_13_21_position",
+      "type": "feature",
+      "name": "ema_channel_13_21_position",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ema_channel_13_21_gap",
+      "type": "feature",
+      "name": "ema_channel_13_21_gap",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ema_channel_13_21_width",
+      "type": "feature",
+      "name": "ema_channel_13_21_width",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ema_channel_13_21_slope",
+      "type": "feature",
+      "name": "ema_channel_13_21_slope",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ema_channel_144_169_position",
+      "type": "feature",
+      "name": "ema_channel_144_169_position",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ema_channel_144_169_gap",
+      "type": "feature",
+      "name": "ema_channel_144_169_gap",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ema_channel_144_169_width",
+      "type": "feature",
+      "name": "ema_channel_144_169_width",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_market_sequence_ema_channel_144_169_slope",
+      "type": "feature",
+      "name": "ema_channel_144_169_slope",
+      "stream": "market_sequence",
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_decision_context",
+      "type": "group",
+      "label": "Decision Context"
+    },
+    {
+      "id": "feature_decision_context_bar_slot_norm",
+      "type": "feature",
+      "name": "bar_slot_norm",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_day_progress",
+      "type": "feature",
+      "name": "day_progress",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_is_morning_session",
+      "type": "feature",
+      "name": "is_morning_session",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_is_afternoon_session",
+      "type": "feature",
+      "name": "is_afternoon_session",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_minutes_to_close_norm",
+      "type": "feature",
+      "name": "minutes_to_close_norm",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_is_open_auction",
+      "type": "feature",
+      "name": "is_open_auction",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_market_constraints",
+      "type": "group",
+      "label": "Market Constraints"
+    },
+    {
+      "id": "feature_decision_context_market_can_buy",
+      "type": "feature",
+      "name": "market_can_buy",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_market_can_sell",
+      "type": "feature",
+      "name": "market_can_sell",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_is_tradeable",
+      "type": "feature",
+      "name": "is_tradeable",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_is_limit_up",
+      "type": "feature",
+      "name": "is_limit_up",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_is_limit_down",
+      "type": "feature",
+      "name": "is_limit_down",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_decision_context_is_zero_volume",
+      "type": "feature",
+      "name": "is_zero_volume",
+      "stream": "decision_context",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_runtime_portfolio",
+      "type": "group",
+      "label": "Runtime Portfolio"
+    },
+    {
+      "id": "feature_runtime_state_cash_ratio",
+      "type": "feature",
+      "name": "cash_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_position_ratio",
+      "type": "feature",
+      "name": "position_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_available_position_ratio",
+      "type": "feature",
+      "name": "available_position_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_unrealized_pnl_ratio",
+      "type": "feature",
+      "name": "unrealized_pnl_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_holding_bars_norm",
+      "type": "feature",
+      "name": "holding_bars_norm",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_one_lot_nav_ratio",
+      "type": "feature",
+      "name": "one_lot_nav_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_max_buy_value_ratio",
+      "type": "feature",
+      "name": "max_buy_value_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_max_sell_value_ratio",
+      "type": "feature",
+      "name": "max_sell_value_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "group_environment_state",
+      "type": "group",
+      "label": "Environment State"
+    },
+    {
+      "id": "feature_runtime_state_can_buy",
+      "type": "feature",
+      "name": "can_buy",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_can_sell",
+      "type": "feature",
+      "name": "can_sell",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    }
+  ],
+  "schema_hash": "17d6adc85b59d54e5ba524fb06060ede23eb5b1f3bb65603be09a28757c894e3",
+  "document_hash": "5affc99c0ebbb07050dcb8a730ea2e040eb7ca6935beb7f0b6878ba6b6de13ef"
+}

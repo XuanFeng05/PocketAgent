@@ -1,0 +1,31 @@
+# Runtime artifacts
+runtime_layer/*
+!runtime_layer/README.md
+
+# Local commands / personal notes
+命令.txt
+
+# Reference papers / archives
+references/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local env files
+.env
+.env.*

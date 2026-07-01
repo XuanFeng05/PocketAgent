@@ -1,0 +1,108 @@
+{
+  "version": 2,
+  "indicators": [
+    {
+      "id": "macd",
+      "kind": "macd",
+      "enabled": true,
+      "render_target": "sub_panel",
+      "default_visible": true,
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "params": {
+        "fast": 12,
+        "slow": 26,
+        "signal": 9
+      }
+    },
+    {
+      "id": "kd",
+      "kind": "kd",
+      "enabled": true,
+      "render_target": "sub_panel",
+      "default_visible": true,
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "params": {
+        "lookback": 9,
+        "smooth_k": 3,
+        "smooth_d": 3
+      }
+    },
+    {
+      "id": "efi",
+      "kind": "efi",
+      "enabled": true,
+      "render_target": "sub_panel",
+      "default_visible": false,
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "params": {
+        "fast": 2,
+        "slow": 13,
+        "baseline": 20
+      }
+    },
+    {
+      "id": "13_21",
+      "kind": "ema_channel",
+      "enabled": true,
+      "render_target": "main_overlay",
+      "default_visible": true,
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "params": {
+        "fast": 13,
+        "slow": 21
+      }
+    },
+    {
+      "id": "144_169",
+      "kind": "ema_channel",
+      "enabled": true,
+      "render_target": "main_overlay",
+      "default_visible": true,
+      "frequencies": [
+        "5min",
+        "15min",
+        "30min",
+        "60min",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "params": {
+        "fast": 144,
+        "slow": 169
+      }
+    }
+  ]
+}

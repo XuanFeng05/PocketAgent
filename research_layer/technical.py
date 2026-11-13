@@ -93,6 +93,7 @@ def normalize_technical_bars(bars: Any, symbol: str | None = None, min_rows: int
 def run_technical_backtest(
     bars: Any, strategy: str = "sma_trend", parameters: dict | None = None,
     *, cost_bps: float = 0.0, warmup_bars: Any | None = None,
+    session_closes: dict | None = None,
 ) -> dict:
     """Apply existing technical rules to a fully invested/cash return index."""
     if strategy not in SUPPORTED_STRATEGIES:
@@ -119,7 +120,7 @@ def run_technical_backtest(
 
     def observe(row, *, origin="evaluation"):
         closes.append(float(row["close"]))
-        timestamp = datetime.combine(row["datetime"].date(), time(15))
+        timestamp = pd.Timestamp(session_closes[row["datetime"].date().isoformat()]).to_pydatetime() if session_closes is not None else datetime.combine(row["datetime"].date(), time(15))
         # The registry only observes whether a position exists. No adjusted
         # price is converted to a fabricated number of real shares.
         intent = policy.on_close(BarView(symbol, timestamp, tuple(closes)),
@@ -171,7 +172,7 @@ def run_technical_backtest(
         nav *= 1.0 + exposure * intraday_return
         if not math.isfinite(nav) or nav <= 0:
             raise ValueError("Technical NAV became nonfinite or nonpositive.")
-        equity.append({"date": day.isoformat(), "time": datetime.combine(day, time(15)).isoformat(),
+        equity.append({"date": day.isoformat(), "time": pd.Timestamp(session_closes[day.isoformat()]).isoformat() if session_closes is not None else datetime.combine(day, time(15)).isoformat(),
                        "nav": nav, "exposure": exposure, "overnight_exposure": old_exposure,
                        "adjusted_close": close, "overnight_return": overnight_return,
                        "intraday_return": intraday_return, "opening_nav_before_cost": opening_nav,

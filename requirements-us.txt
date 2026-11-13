@@ -1,0 +1,4 @@
+# Optional US technical research, no training/GPU dependencies.
+-r requirements.txt
+exchange-calendars>=4.11,<5
+tzdata>=2025.2

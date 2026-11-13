@@ -83,6 +83,18 @@ def build_triple_features(bars: Any, calendar: Any, settings=None) -> pd.DataFra
     # normalize_technical_bars already rejects negative, missing, or infinite
     # numeric volume. Zero volume is retained as a non-tradeable observation.
     cal = _normalize_calendar(calendar, frame.iloc[0]["datetime"], frame.iloc[-1]["datetime"])
+    if resolved.is_us:
+        if "session_close" not in cal:
+            raise ValueError("US research requires an explicit local session_close calendar including early closes.")
+        opens = cal.loc[cal["is_trading_day"]].copy()
+        closes = pd.to_datetime(opens["session_close"], errors="raise")
+        if closes.isna().any() or closes.dt.tz is not None or not closes.dt.normalize().eq(opens["date"]).all():
+            raise ValueError("US session_close must be a local timestamp on each trading date.")
+        if not closes.dt.hour.isin([13, 16]).all():
+            raise ValueError("Unsupported US session close; expected 13:00 or 16:00 New York time.")
+        close_lookup = dict(zip(opens["date"], closes))
+    else:
+        close_lookup = {d: pd.Timestamp.combine(d.date(), time(15)) for d in cal["date"]}
     session_dates = pd.DatetimeIndex(cal.loc[cal["is_trading_day"], "date"])
     daily_dates = pd.DatetimeIndex(frame["datetime"])
     unexpected = daily_dates.difference(session_dates)
@@ -114,10 +126,12 @@ def build_triple_features(bars: Any, calendar: Any, settings=None) -> pd.DataFra
         observed = pd.DatetimeIndex(group["datetime"])
         if not observed.equals(pd.DatetimeIndex(expected)):
             continue
-        weekly.append({"weekly_available_at": pd.Timestamp.combine(expected.iloc[-1].date(), time(15)),
+        weekly.append({"weekly_available_at": close_lookup[expected.iloc[-1]],
                        "weekly_close": float(group.iloc[-1]["close"])})
 
-    frame["_decision_close"] = frame["datetime"].map(lambda value: pd.Timestamp.combine(value.date(), time(15)))
+    frame["_decision_close"] = frame["datetime"].map(close_lookup)
+    if resolved.is_us:
+        frame["session_close"] = frame["_decision_close"]
     if weekly:
         complete = pd.DataFrame(weekly)
         close = complete["weekly_close"]

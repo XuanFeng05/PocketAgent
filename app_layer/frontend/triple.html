@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PocketAgent · 三重滤网</title><link rel="stylesheet" href="triple.css"></head>
 <body>
-<header><a class="brand" href="triple.html">PocketAgent <span>三重滤网</span></a><nav><span class="badge">本地前复权</span><a href="research.html">通用策略研究 ↗</a></nav></header>
+<header><a class="brand" href="triple.html">PocketAgent <span>三重滤网</span></a><nav><span id="marketBadge" class="badge">本地前复权</span><a href="triple.html?market=CN">A股</a><a href="triple.html?market=US">美股</a><a href="research.html">通用策略研究 ↗</a></nav></header>
 <main>
   <div class="intro"><div><p class="eyebrow">TRIPLE SCREEN / LOCAL RESEARCH</p><h1>三重滤网研究</h1><p>周线 MACD 定方向，日线 EFI 识别回调，突破前日高点触发入场。</p></div><div class="scope">本地已有股票清单<br><span>只读 · 不下载 · 独立标准化净值</span></div></div>
   <div class="layout">
@@ -16,7 +16,7 @@
       <fieldset id="studyFields" hidden><legend>对照案例</legend><div id="cases"></div><p class="hint">完整规则必须保留。邻域案例只覆盖所标参数；滤网移除案例保持其他规则。不会选出“最优策略”。</p></fieldset>
       <div class="toolbar"><button id="selectAll" class="secondary" type="button">全选</button><button id="selectNone" class="secondary" type="button">清空</button><span id="selectionCount">已选 0 股</span></div>
       <div id="symbols" class="symbols" role="group" aria-label="本地股票清单"></div>
-      <p class="hint">只使用已存在的前复权日线。单股模式只保留一项选择，批量模式最多 100 股。</p>
+      <p id="sourceHint" class="hint">只使用已存在的调整日线。单股模式只保留一项选择，批量模式最多 100 股。</p>
       <p id="budget" role="status"></p>
       <button id="run" type="button" disabled>启动三重滤网实验</button><button id="cancel" class="secondary wide" type="button" hidden>完成当前步骤后取消</button><p id="status" role="status" aria-live="polite">正在读取本地股票清单…</p>
     </section>

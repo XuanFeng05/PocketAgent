@@ -1,6 +1,6 @@
 # PocketAgent
 
-CPU-first A-share strategy research and backtesting. 当前重点是在已有本地 **100 股**上研究前复权三重滤网，比较规则、成本和不同时期的表现。研究结果不等同实盘收益。
+CPU-first strategy research and backtesting. 保留原A股100股研究；在 `codex/local100-ui-repair` 页面修复基础上增加独立的 **100只非仙股美股**验证路径。两个市场的清单、数据、日历和执行版本分开，研究结果不等同实盘收益。
 
 **当前状态与云端接手入口：[PROJECT_STATUS.zh-CN.md](PROJECT_STATUS.zh-CN.md)。** 早期 docs/plans 保留历史决策与实验摘要，其中的完成声明应结合最新状态说明及实际代码核对。
 
@@ -20,12 +20,12 @@ CPU-first A-share strategy research and backtesting. 当前重点是在已有本
 - `research_layer/triple_study.py`：参数邻域与滤网移除对照。
 - `research_layer/triple_shards.py`：本地分片及校验恢复。
 - `app_layer/`：本地 Dashboard、API 与页面。
-- `data_layer/`、`download_layer/`：存储与显式下载工具。使用下载工具前应由用户安排，当前任务禁止自动下载。
+- `data_layer/`、`download_layer/`：存储与显式下载工具。本轮已获云端下载授权；页面不会自动下载，本机取数仍由用户另行安排。
 - `agent_layer/`：保留的旧训练兼容代码；CPU研究入口不需要 PyTorch。
 
 ## 本地使用
 
-建议 Python 3.12。依赖清单为 `requirements.txt`、`requirements-dev.txt`；旧训练依赖独立放在 `requirements-training.txt`。环境准备由使用者安排，本次源码同步没有下载或安装依赖。
+建议 Python 3.12和独立虚拟环境。测试安装 `requirements-dev.txt`（已引用基础依赖），美股另安装 `requirements-us.txt`。本轮云端已准备依赖；旧训练依赖独立放在 `requirements-training.txt`，当前CPU研究不需要PyTorch或CUDA。
 
 在已经准备好环境的项目根目录运行：
 
@@ -33,7 +33,9 @@ CPU-first A-share strategy research and backtesting. 当前重点是在已有本
 python -m app_layer.cli.run_dashboard --host 127.0.0.1 --port 8000
 ```
 
-访问 `http://127.0.0.1:8000/triple.html`。修复分支支持本地股票选择、真实进度/取消、单股/批量报告、可编辑年度窗口、10案例选择与子报告。没有行情时不会自动下载；云端环境可按用户授权另行下载，数据不进Git。
+访问 `http://127.0.0.1:8000/triple.html` 使用A股，或 `http://127.0.0.1:8000/triple.html?market=US` 使用美股。沿用本地修复分支的真实进度、任务边界取消、可编辑年度窗口、10案例与子报告。没有行情时不会自动下载。
+
+美股下载与合并配置见 [US_MERGE](plans/triple_screen/US_MERGE.zh-CN.md)，市场口径见 [US_SCOPE](plans/triple_screen/US_SCOPE.zh-CN.md)。100股清单为 `config/universe/us_research100.txt`，日线独立存入 `runtime_layer/data_us`；数据和运行结果不进Git。
 
 CLI 固定规则配置：
 

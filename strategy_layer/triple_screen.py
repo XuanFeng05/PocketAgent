@@ -17,7 +17,7 @@ class TripleScreenSettings:
     cost_bps: float = 0.0
 
     def __post_init__(self):
-        if self.version != "triple_screen_pre_v1":
+        if self.version not in {"triple_screen_pre_v1", "triple_screen_us_pre_v1"}:
             raise ValueError("Unsupported Triple Screen rule version.")
         for field in ("macd_fast", "macd_slow", "macd_signal", "force_span", "warmup_weeks"):
             value = getattr(self, field)
@@ -30,6 +30,10 @@ class TripleScreenSettings:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @property
+    def is_us(self) -> bool:
+        return self.version == "triple_screen_us_pre_v1"
 
 
 def resolve_triple_settings(value: TripleScreenSettings | dict | None = None) -> TripleScreenSettings:

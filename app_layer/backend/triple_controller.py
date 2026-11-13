@@ -49,17 +49,23 @@ def _read(path):
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
-def local_symbols(data_root=DEFAULT_DATA_ROOT):
+def local_symbols(data_root=DEFAULT_DATA_ROOT, *, market="CN"):
+    pattern = r"[A-Z]{1,5}(?:-[A-Z])?" if market == "US" else r"\d{6}_(SH|SZ|BJ)"
     return sorted({p.parent.name.replace("_", ".").upper()
                    for p in (Path(data_root) / "market_parts").glob("bucket=*/*/daily_pre.parquet")
-                   if re.fullmatch(r"\d{6}_(SH|SZ|BJ)", p.parent.name.upper())})
+                   if re.fullmatch(pattern, p.parent.name.upper())})
 
 
 class TripleDashboardService:
-    def __init__(self, jobs: JobManager, *, output_root=None, data_root=DEFAULT_DATA_ROOT):
+    def __init__(self, jobs: JobManager, *, output_root=None, data_root=None, market="CN"):
+        if market not in {"CN", "US"}:
+            raise ValueError("Unsupported dashboard market")
+        self.market = market
+        self.api_prefix = "/api/triple-us" if market == "US" else "/api/triple"
+        self.default_dates = ("2022-01-03", "2025-12-31") if market == "US" else ("2022-01-04", "2024-12-31")
         self.jobs = jobs
-        self.data_root = Path(data_root).resolve()
-        self.output_root = Path(output_root or DEFAULT_OUTPUT).resolve()
+        self.data_root = Path(data_root or (PROJECT_ROOT / "runtime_layer/data_us" if market == "US" else DEFAULT_DATA_ROOT)).resolve()
+        self.output_root = Path(output_root or (PROJECT_ROOT / "runtime_layer/reports/triple_dashboard_us" if market == "US" else DEFAULT_OUTPUT)).resolve()
         self.requests_root = self.output_root / "requests"
         self._lock = RLock()
         self.session = uuid4().hex
@@ -67,11 +73,12 @@ class TripleDashboardService:
         _SESSIONS[self.session] = self
 
     def spec(self):
-        symbols = local_symbols(self.data_root)
+        symbols = local_symbols(self.data_root, market=self.market)
         return {"mode": "triple_screen", "data_root": str(self.data_root), "price_basis": "pre",
-                "symbols": symbols, "symbol_count": len(symbols), "default_start": "2022-01-04",
-                "default_end": "2024-12-31", "default_costs_bps": [10], "default_mode": "batch",
-                "settings_defaults": resolve_triple_settings().to_dict(),
+                "market": self.market, "price_adjustment": "Yahoo拆股/分红调整OHLC" if self.market == "US" else "BaoStock前复权",
+                "symbols": symbols, "symbol_count": len(symbols), "default_start": self.default_dates[0],
+                "default_end": self.default_dates[1], "default_costs_bps": [10], "default_mode": "batch",
+                "settings_defaults": resolve_triple_settings({"version": "triple_screen_us_pre_v1"} if self.market == "US" else None).to_dict(),
                 "default_cases": _read(PROJECT_ROOT / "plans/triple_screen/m6_study_cases.json"),
                 "modes": [{"id": k, "label": v} for k,v in [("single","单股回测"),("batch","股票批量回测"),("annual","年度验证"),("study","参数与滤网对照")]],
                 "limitations": ["仅使用本地前复权行情，不下载。", "标准化独立账户，非共享资金组合。", "取消在一个股票/成本任务结束后生效，保留已有结果。"]}
@@ -100,12 +107,12 @@ class TripleDashboardService:
         symbols = [s.strip().upper() for s in symbols]
         if len(symbols)>100 or len(set(symbols))!=len(symbols):
             raise ValueError("股票最多100只且不能重复")
-        if set(symbols)-set(local_symbols(self.data_root)):
+        if set(symbols)-set(local_symbols(self.data_root, market=self.market)):
             raise ValueError("股票不在本地前复权清单")
         if mode=="single" and len(symbols)!=1:
             raise ValueError("单股模式只能选择一只股票")
         dates = {}
-        for field,default in [("start","2022-01-04"),("end","2024-12-31")]:
+        for field,default in zip(("start", "end"), self.default_dates):
             value=payload.get(field,default)
             if not isinstance(value,str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}",value):
                 raise ValueError("日期需为YYYY-MM-DD")
@@ -118,9 +125,11 @@ class TripleDashboardService:
         settings=payload.get("settings",{})
         if not isinstance(settings,dict) or set(settings)-{"macd_fast","macd_slow","macd_signal","force_span","warmup_weeks"}:
             raise ValueError("规则参数字段无效")
-        resolved=resolve_triple_settings(settings).to_dict()
+        resolved=resolve_triple_settings({**settings, "version": "triple_screen_us_pre_v1"} if self.market == "US" else settings).to_dict()
         config={"mode":mode,"source_type":"market","source_path":str(self.data_root),"adjust":"pre",
                 "symbols":symbols,**dates,"settings":resolved,"cost_scenarios_bps":costs,"research_scope":"exploratory"}
+        if self.market == "US":
+            config["calendar_path"] = str(self.data_root / "calendar.csv")
         if mode=="annual":
             windows=payload.get("windows")
             if windows is None:
@@ -289,7 +298,7 @@ class TripleDashboardService:
             if file.exists():record["summary"]=_read(file)
             elif (root/"progress.json").exists():record["summary"]=_read(root/"progress.json")
             targets=self._report_targets(record,record.get("summary",{}))
-            record["report_links"]=[{"label":label,"url":f"/api/triple/runs/{job_id}/reports/{i}"} for i,(label,_) in enumerate(targets)]
+            record["report_links"]=[{"label":label,"url":f"{self.api_prefix}/runs/{job_id}/reports/{i}"} for i,(label,_) in enumerate(targets)]
             if targets:record["report_url"]=record["report_links"][0]["url"]
         return record
 

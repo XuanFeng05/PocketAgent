@@ -125,7 +125,7 @@ def normalize_study_protocol(config: dict, cases: list[dict]) -> dict:
             "selection_policy": "no_winner_selection_no_ranking", "primary_case_id": "primary",
             "pairing_policy": "same_symbol_cost_effective_dates_input_sha256_calendar_sha256",
             "account_policy": "independent_initial_nav_1_per_symbol_per_case",
-            "source_policy": "local_files_only_no_downloads", "coverage_claim": "requested_list_not_full_A_share_certification"}
+            "source_policy": "local_files_only_no_downloads", "coverage_claim": "requested_list_not_full_market_certification"}
 
 
 def _failure_rows(fixed, error):

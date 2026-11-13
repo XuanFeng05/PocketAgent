@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "universe_file": "config/universe/us_research500.txt",
+  "count": 500,
+  "original_count_preserved": 100,
+  "added_count": 400,
+  "market": "US",
+  "not_index_replication": true,
+  "source_url": "https://www.ishares.com/us/products/239707/ishares-russell-1000-etf/latest-holdings.csv",
+  "source_holdings_as_of": "2026-11-11",
+  "source_holdings_sha256": "ce4d30c53816c2d4babc18e568c7ae0cafe15f254c1298d87abcf045e1afbae1",
+  "universe_sha256": "d5c3e0eb45800cb00cca7955c7514a3b58e5e7a920047f85808dba8fabe26b54",
+  "original_universe_sha256": "7f2a2f645c3a2b64b83afc287f5aed554e03ee1038c080288639615370032f34",
+  "selection_rule": "Preserve original100; add first400 qualifying equities in descending IWB holding market value, tie ticker. No strategy returns used.",
+  "minimum_endpoint_price_USD": 10,
+  "minimum_60_session_median_vendor_close_times_volume_USD": 25000000,
+  "source_selection_bias": "Current survivor/provider-available sample. November2026 membership and endpoint liquidity are future information relative to2022-2025. Not point-in-time universe.",
+  "reproduction": "Use the committed500-member list; never fetch latest holdings to silently replace members on reruns. Raw holdings, source market data and per-candidate outcomes remain outsideGit."
+}

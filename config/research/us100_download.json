@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "market": "US",
+  "source": "yahoo_finance_chart",
+  "universe_file": "config/universe/us_research100.txt",
+  "fixed_universe_count": 100,
+  "scope": "Same 100 symbols as previous cloud research; no reselection. Current-survivor selection bias remains.",
+  "start": "2020-01-01",
+  "end": "2026-07-12",
+  "interval": "1d",
+  "price_adjustment": "vendor_OHLC * (adjclose / vendor_close)",
+  "volume_unit": "shares",
+  "workers": 1,
+  "sleep_seconds": 0.5,
+  "network_timeout_seconds": 20,
+  "outer_timeout_seconds": 1800,
+  "data_root": "runtime_layer/data_us_research",
+  "report_root": "runtime_layer/reports/us100_restore",
+  "calendar": "XNYS",
+  "probe": {
+    "symbol": "AAPL",
+    "start": "2024-01-01",
+    "end": "2024-01-31",
+    "data_root": "runtime_layer/reports/us100_restore/probe"
+  },
+  "old_snapshot_available": false,
+  "note": "A restored download is a new provider version, not identical to the vanished previous cloud snapshot. Yahoo vendor OHLC may already incorporate splits, so nominal historical exchange ticks cannot be inferred from adjclose/vendor_close alone."
+}

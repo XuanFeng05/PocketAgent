@@ -1,0 +1,5 @@
+# Optional CPU-only US research experiments; no training dependencies.
+-r requirements-dev.txt
+exchange-calendars>=4.8,<5
+scipy>=1.14,<2
+numba>=0.68,<0.69

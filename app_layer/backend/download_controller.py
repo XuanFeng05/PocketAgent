@@ -147,7 +147,14 @@ def normalize_freqs(raw: Any) -> list[str]:
 
 def download_catalog() -> dict[str, Any]:
     """Return current and planned downloadable dataset catalog for the app layer."""
-    return catalog_payload()
+    from app_layer.backend.yahoo_download_controller import yahoo_profiles
+    return {
+        **catalog_payload(),
+        "providers": [
+            {"id": "baostock", "label": "BaoStock / A-share", "market": "CN"},
+            {"id": "yahoo", "label": "Yahoo Finance / US", "market": "US", "profiles": yahoo_profiles()},
+        ],
+    }
 
 def normalize_adjustflags(raw: Any) -> list[str]:
     """
@@ -198,6 +205,13 @@ def start_download_job(payload: dict[str, Any], jobs: JobManager) -> dict[str, A
             f"A download job is already {active.get('status')}: {active.get('job_id')}. "
             "Stop it or wait for it to finish before starting another download."
         )
+
+    source = str(payload.get("source") or "baostock").lower()
+    if source == "yahoo":
+        from app_layer.backend.yahoo_download_controller import start_yahoo_download_job
+        return start_yahoo_download_job(payload, jobs)
+    if source != "baostock":
+        raise ValueError("Unsupported source. Choose baostock or yahoo.")
 
     symbols = _resolve_symbols(payload)
     if not symbols:

@@ -140,6 +140,8 @@ const I18N_EN_TO_ZH = {
   'Replace existing symbol rows': '替换已有股票数据',
   'Skip verified completed slices': '跳过已验证完成分片',
   'Start Download': '开始下载',
+  'Data Source': '数据源',
+  'US Research Profile': '美股研究配置',
   'Stop': '停止',
   'Download Job': '下载任务',
   'No active job': '无活动任务',
@@ -2619,9 +2621,35 @@ function setDownloadRunning(active) {
   state.downloadJobActive = Boolean(active);
   if ($('startDownloadBtn')) $('startDownloadBtn').disabled = state.downloadJobActive;
   if ($('stopDownloadBtn')) $('stopDownloadBtn').disabled = !state.downloadJobActive;
+  if ($('downloadSource')) $('downloadSource').disabled = state.downloadJobActive;
+  if ($('yahooDownloadProfile')) $('yahooDownloadProfile').disabled = state.downloadJobActive;
+}
+
+let yahooDownloadProfiles = [];
+function updateDownloadSource() {
+  const yahoo = $('downloadSource').value === 'yahoo';
+  $('yahooDownloadFields').classList.toggle('hidden', !yahoo);
+  $('baoStockDownloadFields').classList.toggle('hidden', yahoo);
+  const profile = yahooDownloadProfiles.find(item => item.id === $('yahooDownloadProfile').value);
+  $('yahooDownloadSummary').textContent = DownloadUI.profileSummary(profile);
+}
+
+async function loadDownloadSources() {
+  try {
+    const response = await apiGet('/api/download/catalog');
+    yahooDownloadProfiles = response.data.providers.find(item => item.id === 'yahoo')?.profiles || [];
+    updateDownloadSource();
+  } catch (err) {
+    $('yahooDownloadSummary').textContent = `US configuration unavailable: ${err.message}`;
+  }
 }
 
 function renderJob(job) {
+  if (['queued', 'running'].includes(job.status)) {
+    $('downloadSource').value = job.source === 'yahoo' ? 'yahoo' : 'baostock';
+    if (job.source === 'yahoo' && job.profile) $('yahooDownloadProfile').value = job.profile;
+    updateDownloadSource();
+  }
   const progress = Math.round((Number(job.progress || 0)) * 100);
   $('jobStatus').textContent = `${job.status || '-'} / ${job.message || ''}`;
   $('jobStatus').className = `job-status ${job.status || ''}`;
@@ -2730,11 +2758,11 @@ function startPollingJob(jobId) {
     try {
       const res = await apiGet(`/api/jobs/${jobId}`);
       renderJob(res.job);
-      if (['completed', 'failed', 'cancelled'].includes(res.job.status)) {
+      if (DownloadUI.TERMINAL.has(res.job.status)) {
         clearInterval(state.pollTimer);
         state.pollTimer = null;
         setDownloadRunning(false);
-        await refreshInventory();
+        if (res.job.source !== 'yahoo') await refreshInventory();
         if (res.job.result?.report_path) await loadDownloadReport(res.job.result.report_path);
       }
     } catch (err) {
@@ -2759,12 +2787,17 @@ function getSelectedDownloadAdjustflags() {
 
 async function startDownload() {
   if (state.downloadJobActive) return;
+  const source = $('downloadSource').value;
+  if (source === 'yahoo' && !yahooDownloadProfiles.some(item => item.id === $('yahooDownloadProfile').value)) {
+    await loadDownloadSources();
+    if (!yahooDownloadProfiles.some(item => item.id === $('yahooDownloadProfile').value)) {
+      return alert('US download configuration is unavailable.');
+    }
+  }
   const freqs = getSelectedDownloadFreqs();
-  if (!freqs.length) return alert('Select at least one frequency.');
   const adjustflags = getSelectedDownloadAdjustflags();
-  if (!adjustflags.length) return alert('Select at least one adjust mode.');
 
-  const payload = {
+  const baoStockPayload = {
     db_path: $('downloadDbPath').value.trim(),
     storage_mode: 'shard',
     storage_root: $('downloadStorageRoot')?.value.trim() || 'runtime_layer/data',
@@ -2780,6 +2813,7 @@ async function startDownload() {
   };
 
   try {
+    const payload = DownloadUI.buildPayload(source, $('yahooDownloadProfile').value, baoStockPayload);
     setDownloadRunning(true);
     const res = await apiPost('/api/download/start', payload);
     startPollingJob(res.data.job_id);
@@ -4474,6 +4508,8 @@ function bindEvents() {
   $('applyConfigDefaultsBtn').addEventListener('click', applyConfigDefaultsToDownload);
   $('startDownloadBtn').addEventListener('click', startDownload);
   $('stopDownloadBtn').addEventListener('click', stopDownload);
+  $('downloadSource').addEventListener('change', updateDownloadSource);
+  $('yahooDownloadProfile').addEventListener('change', updateDownloadSource);
   $('materializeBarsBtn').addEventListener('click', materializeBars);
   $('stopMaterializeBtn').addEventListener('click', stopMaterializeBars);
   $('materializeBaseFreq').addEventListener('change', syncMaterializeTargetsForBase);
@@ -4653,6 +4689,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   setSharedDbPath(DEFAULT_DB_PATH);
   setDownloadRunning(false);
   setDownloadSymbolsPath(DEFAULT_DOWNLOAD_SYMBOLS_FILE);
+  await loadDownloadSources();
   await loadFeatureSpec();
   await loadFeatureIndicators();
   await loadModelInputBlueprint();

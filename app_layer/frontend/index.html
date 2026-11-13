@@ -136,7 +136,22 @@
         <div class="grid two">
           <div class="card">
             <h2>Download Data</h2>
-            <div class="form-grid two-cols">
+            <label>Data Source
+              <select id="downloadSource">
+                <option value="baostock" selected>BaoStock / A 股</option>
+                <option value="yahoo">Yahoo Finance / 美股</option>
+              </select>
+            </label>
+            <div id="yahooDownloadFields" class="hidden">
+              <label>US Research Profile
+                <select id="yahooDownloadProfile">
+                  <option value="us500" selected>固定 500 只美股</option>
+                  <option value="us100">原始 100 只美股</option>
+                </select>
+              </label>
+              <p id="yahooDownloadSummary" class="muted" style="white-space: pre-line">Loading US download configuration…</p>
+            </div>
+            <div id="baoStockDownloadFields" class="form-grid two-cols">
               <label>Market Data Root
                 <input id="downloadDbPath" value="runtime_layer/data" />
               </label>
@@ -727,6 +742,7 @@
 
   
 
-  <script src="/app.js?v=20261107_data_workbench"></script>
+  <script src="/download.js?v=20261113_yahoo"></script>
+  <script src="/app.js?v=20261113_yahoo"></script>
 </body>
 </html>

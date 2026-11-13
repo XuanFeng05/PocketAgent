@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+import sys
 from time import sleep
 
 import pandas as pd
@@ -168,8 +170,15 @@ def normalize_adjustflags(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Download A-share K-line data into partitioned market shards."
+        description="Download BaoStock A-share shards or an independent Yahoo US daily snapshot.",
+        allow_abbrev=False,
     )
+
+    parser.add_argument("--source", choices=["baostock", "yahoo"], default="baostock",
+                        help="Data provider. Default: baostock; Yahoo uses an independent US --config.")
+    parser.add_argument("--config", help="Yahoo US download JSON configuration; paths are relative to the repository root.")
+    parser.add_argument("--only", nargs="+", help="Yahoo only: download/audit named members of the unchanged fixed universe.")
+    parser.add_argument("--audit-only", action="store_true", help="Yahoo only: audit existing fixed-universe files without downloading.")
 
     parser.add_argument(
         "--storage",
@@ -195,18 +204,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--symbols",
-        required=True,
-        help="Symbol txt file. One symbol per line.",
+        help="BaoStock symbol txt file (required). One symbol per line.",
     )
     parser.add_argument(
         "--start",
-        required=True,
-        help="Start date, YYYY-MM-DD.",
+        help="BaoStock start date, YYYY-MM-DD (required).",
     )
     parser.add_argument(
         "--end",
-        required=True,
-        help="End date, YYYY-MM-DD.",
+        help="BaoStock end date, YYYY-MM-DD (required).",
     )
     parser.add_argument(
         "--freqs",
@@ -382,9 +388,41 @@ def _refresh_catalog_after_process_result(storage_root: str | Path, result: Symb
     return messages
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
-    args = parser.parse_args()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(argv)
+
+    if args.source == "yahoo":
+        allowed = {"--source", "--config", "--only", "--audit-only"}
+        conflicts = sorted({value.split("=", 1)[0] for value in argv if value.startswith("--")} - allowed)
+        if conflicts:
+            parser.error("Yahoo settings belong in its independent --config; BaoStock options are not accepted: " + ", ".join(conflicts))
+        if not args.config:
+            parser.error("--source yahoo requires --config (for example config/research/us500_download.json).")
+        if args.audit_only and args.only:
+            parser.error("--audit-only audits the whole frozen universe and cannot be combined with --only.")
+        from download_layer.services.yahoo_downloader import audit_yahoo, download_yahoo, load_yahoo_config, PROJECT_ROOT
+        try:
+            config = load_yahoo_config(args.config)
+            config_path = Path(args.config)
+            if not config_path.is_absolute():
+                config_path = PROJECT_ROOT / config_path
+            if args.audit_only:
+                result = audit_yahoo(config, config_path)
+                print(json.dumps({key: value for key, value in result.items() if key not in {"outcomes", "file_hashes"}}, ensure_ascii=False), flush=True)
+                raise SystemExit(0 if result["failed_stocks"] == 0 else 2)
+            result = download_yahoo(config, config_path, only=args.only,
+                                    progress_callback=lambda event: print(json.dumps(event, ensure_ascii=False), flush=True))
+        except (ValueError, OSError, KeyError) as exc:
+            parser.error(str(exc))
+        raise SystemExit(0 if result["status"] == "completed" else 2)
+
+    if args.config or args.only or args.audit_only:
+        parser.error("--config, --only and --audit-only require --source yahoo.")
+    missing = ["--" + name for name in ("symbols", "start", "end") if not getattr(args, name)]
+    if missing:
+        parser.error("BaoStock requires " + ", ".join(missing))
 
     symbols = read_symbols_from_file(args.symbols)
     if not symbols:

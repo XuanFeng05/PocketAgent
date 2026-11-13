@@ -33,7 +33,7 @@ CPU-first A-share strategy research and backtesting. 当前重点是在已有本
 python -m app_layer.cli.run_dashboard --host 127.0.0.1 --port 8000
 ```
 
-访问 `http://127.0.0.1:8000/triple.html`。这个页面目前可读取本地股票清单、提交任务及查看单股/批量报告；**年度显示、完整案例选择、进度/取消等仍有待修项**，详见当前状态。没有行情时不会自动下载。
+访问 `http://127.0.0.1:8000/triple.html`。修复分支支持本地股票选择、真实进度/取消、单股/批量报告、可编辑年度窗口、10案例选择与子报告。没有行情时不会自动下载；云端环境可按用户授权另行下载，数据不进Git。
 
 CLI 固定规则配置：
 
@@ -52,10 +52,11 @@ python -m backtest_layer.cli.run --demo --strategy sma_trend
 无市场数据的环境可先运行：
 
 ```text
-python -B -m pytest -q -p no:cacheprovider --ignore=tests/integration/test_triple_dashboard.py
+python -B -m pytest -q -p no:cacheprovider
+node tests/frontend/test_triple_ui.js
 node --check app_layer/frontend/triple.js
 ```
 
-被排除的 Dashboard 测试文件目前直接依赖原机器的100股行情；后续应改成临时合成 fixture。`node --check` 只检查语法，不证明界面行为正确。
+Dashboard集成测试使用临时合成分片，不依赖原机器行情；Node测试覆盖payload、日期、案例、格式化与状态逻辑。`node --check`只检查语法，不证明界面行为正确。
 
 实验规格见 [SPEC](plans/triple_screen/SPEC.zh-CN.md)，历史本地结果解读见 [M6_RESULTS](plans/triple_screen/M6_RESULTS.zh-CN.md)。这些 Markdown 中出现的运行目录和 Windows 绝对路径是原机器上的证据位置，运行工件没有随仓库上传。

@@ -98,7 +98,7 @@ class JobManager:
             job = self._jobs.get(job_id)
             if job is None:
                 return False
-            if job.get("status") in {"completed", "failed", "cancelled"}:
+            if job.get("status") in {"completed", "partial", "failed", "cancelled", "interrupted"}:
                 return True
             job["cancel_requested"] = True
             job["message"] = "Cancel requested"
@@ -157,7 +157,7 @@ class JobManager:
                 return
 
             current = self.get_job(job_id)
-            if current and current.get("status") not in {"failed", "cancelled"}:
+            if current and current.get("status") not in {"partial", "failed", "cancelled", "interrupted"}:
                 self.update_job(
                     job_id,
                     status="completed",

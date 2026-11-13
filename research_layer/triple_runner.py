@@ -168,7 +168,14 @@ def _summary(rows: list[dict], costs: list[float]) -> list[dict]:
 
 def run_triple_experiment(config: dict, output_root: str | Path, *,
                           progress_callback: Callable[[dict], None] | None = None,
-                          resume_from: str | Path | None = None) -> dict:
+                          resume_from: str | Path | None = None,
+                          cancel_check: Callable[[], bool] | None = None) -> dict:
+    """Run complete stock/cost units; cancellation preserves completed units.
+
+    A cancellation request does not interrupt a numerical backtest mid-bar. It
+    is observed before input loading and between whole stock/cost steps.
+    ``run_started`` publishes the durable result path before any market input.
+    """
     resolved = normalize_triple_config(config)
     implementation = _implementation_identity()
     source_run = Path(resume_from).resolve() if resume_from else None
@@ -220,6 +227,10 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
     def register(path: Path):
         artifacts[path.relative_to(run).as_posix()] = _digest(path)
 
+    def check_cancelled():
+        if cancel_check is not None and cancel_check():
+            raise InterruptedError("Triple Screen cancelled between stock/cost steps; completed results are preserved.")
+
     def checkpoint():
         # Retain one immutable event per task instead of N growing snapshots.
         # Only the final atomic manifest publishes a new event for recovery.
@@ -235,6 +246,10 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
 
     checkpoint()
     try:
+        if progress_callback:
+            progress_callback({"event": "run_started", "run_id": run_id, "path": str(run),
+                               "completed": 0, "total": total, "message": "Preparing local input"})
+        check_cancelled()
         if source_run and "calendar.csv" in prior_index:
             (run / "calendar.csv").write_bytes((source_run / "calendar.csv").read_bytes())
             calendar = pd.read_csv(run / "calendar.csv")
@@ -244,6 +259,7 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
         register(run / "calendar.csv")
         checkpoint()
         for symbol in resolved["symbols"]:
+            check_cancelled()
             key = symbol.replace(".", "_")
             relative_input = f"inputs/{key}.csv"
             load_error = None
@@ -258,9 +274,12 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
                     bars = _load_bars(resolved, symbol)
                     bars.to_csv(input_path, index=False)
                 register(input_path)
+            except InterruptedError:
+                raise
             except Exception as exc:
                 load_error = str(exc)
             for scenario_index, cost in enumerate(resolved["cost_scenarios_bps"]):
+                check_cancelled()
                 task_id = _task_id(symbol, cost, scenario_index)
                 destination = run / "outcomes" / task_id
                 row = {"task_id": task_id, "symbol": symbol, "cost_bps": cost, "status": "running", "reused": False}
@@ -312,6 +331,8 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
                                excess_return_vs_buy_hold=report["excess_return_vs_buy_hold"],
                                data_sha256=artifacts[relative_input], calendar_sha256=artifacts["calendar.csv"],
                                artifact_path=(destination / "result.json").relative_to(run).as_posix())
+                except InterruptedError:
+                    raise
                 except Exception as exc:
                     row.update(status="failed", error=str(exc))
                     _json(destination / "error.json", row)
@@ -319,7 +340,11 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
                 outcomes.append(row)
                 checkpoint()
                 if progress_callback:
-                    progress_callback({"event": "task_completed", "completed": len(outcomes), "total": total, "outcome": row})
+                    progress_callback({"event": "task_completed", "run_id": run_id, "path": str(run),
+                                       "completed": len(outcomes), "total": total, "outcome": row,
+                                       "message": f"{symbol} / {cost:g} bps: {row['status']}"})
+                if len(outcomes) < total:
+                    check_cancelled()
         successes = sum(row["status"] == "completed" for row in outcomes)
         status = "completed" if successes == total else "partial" if successes else "failed"
         summary = {"run_id": run_id, "status": status, "price_basis": "pre", "research_scope": "exploratory",
@@ -334,7 +359,18 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
         _json(run / "status.json", {"run_id": run_id, "status": status, "completed_tasks": total,
                                    "successful_tasks": successes, "failed_tasks": total-successes, "total_tasks": total})
     except BaseException as exc:
-        _json(run / "status.json", {"run_id": run_id, "status": "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
-                                   "error": str(exc), "completed_tasks": len(outcomes), "total_tasks": total})
+        status = "cancelled" if isinstance(exc, InterruptedError) else "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        successes = sum(row["status"] == "completed" for row in outcomes)
+        partial = {"run_id": run_id, "status": status, "price_basis": "pre", "research_scope": "exploratory",
+                   "research_variant": resolved["variant"], "target_symbols": len(resolved["symbols"]),
+                   "total_tasks": total, "recorded_tasks": len(outcomes), "completed_tasks": successes,
+                   "failed_tasks": len(outcomes) - successes, "unfinished_tasks": total-len(outcomes),
+                   "outcomes": outcomes, "by_cost": _summary(outcomes, resolved["cost_scenarios_bps"])}
+        _json(run / "partial_result.json", partial)
+        register(run / "partial_result.json")
+        _json(run / "artifacts.json", {"schema_version": 2, "sha256": artifacts, "outcome_files": outcome_files})
+        _json(run / "status.json", {"run_id": run_id, "status": status, "error": str(exc),
+                                   "completed_tasks": len(outcomes), "successful_tasks": successes,
+                                   "failed_tasks": len(outcomes)-successes, "total_tasks": total})
         raise
     return {"run_id": run_id, "status": status, "path": str(run), "summary": summary}

@@ -69,11 +69,12 @@ DEFAULT_DB_PATH = "runtime_layer/data"
 
 
 class DashboardServer:
-    def __init__(self, *, research_root: str | Path | None = None) -> None:
+    def __init__(self, *, research_root: str | Path | None = None, triple_data_root: str | Path | None = None) -> None:
         self.jobs = JobManager(max_workers=2)
         self.research = ResearchService(self.jobs, output_root=research_root)
         triple_root = (Path(research_root).resolve() / "triple_dashboard") if research_root else None
-        self.triple = TripleDashboardService(self.jobs, output_root=triple_root)
+        self.triple = TripleDashboardService(self.jobs, output_root=triple_root,
+            **({"data_root": triple_data_root} if triple_data_root else {}))
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -129,8 +130,8 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             if path.startswith("/api/triple/runs/"):
                 parts = path.strip("/").split("/")
-                if len(parts) == 5 and parts[4] == "report":
-                    report = self.app.triple.report(parts[3]).read_bytes()
+                if (len(parts) == 5 and parts[4] == "report") or (len(parts) == 6 and parts[4] == "reports"):
+                    report = self.app.triple.report(parts[3], int(parts[5]) if len(parts) == 6 else 0).read_bytes()
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(report)))
@@ -320,6 +321,10 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             if path == "/api/triple/start":
                 self._send_json({"ok": True, "data": self.app.triple.start(payload)}, status=202)
+                return
+
+            if path == "/api/triple/preview":
+                self._send_json({"ok": True, "data": self.app.triple.preview(payload)})
                 return
 
             if path.startswith("/api/triple/runs/") and path.endswith("/cancel"):

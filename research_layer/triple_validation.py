@@ -171,7 +171,13 @@ def _by_cost(window: dict, fixed: dict, rows: list[dict]) -> list[dict]:
 
 
 def run_triple_validation(config: dict, windows: list[dict], output_root: str | Path, *,
-                          progress_callback: Callable[[dict], None] | None = None) -> dict:
+                          progress_callback: Callable[[dict], None] | None = None,
+                          cancel_check: Callable[[], bool] | None = None) -> dict:
+    """Report parent-level task counts and propagate cancellation to children.
+
+    Cancelled windows retain their child path and completed outcome records in
+    partial_result.json; they are not converted into failed strategy attempts.
+    """
     protocol = normalize_validation_protocol(config, windows)
     fixed = protocol["fixed_configuration"]
     implementation = _implementation_identity()
@@ -186,23 +192,64 @@ def run_triple_validation(config: dict, windows: list[dict], output_root: str | 
     (run / "protocol.sha256").write_text(protocol_hash + "\n", encoding="ascii")
     window_results, all_rows = [], []
     expected_tasks = len(protocol["windows"]) * len(fixed["symbols"]) * len(fixed["cost_scenarios_bps"])
+    active_child = {}
+    active_rows = []
     _write_json(run / "status.json", {"status": "running", "completed_windows": 0, "total_windows": len(protocol["windows"])})
+
+    def check_cancelled():
+        if cancel_check is not None and cancel_check():
+            raise InterruptedError("Annual validation cancelled; completed windows and child tasks are preserved.")
+
     try:
+        if progress_callback:
+            progress_callback({"event": "run_started", "run_id": run_id, "path": str(run),
+                               "completed": 0, "total": expected_tasks, "message": "Registered annual validation"})
+        check_cancelled()
         for index, window in enumerate(protocol["windows"]):
+            check_cancelled()
+            active_child = {"window_index": index, "window_label": window["label"]}
+            active_rows = []
             record = {**window, "window_index": index, "run_id": None, "path": None, "status": "running"}
+
+            def child_progress(event):
+                if event.get("run_id"):
+                    active_child["run_id"] = event["run_id"]
+                if event.get("path"):
+                    active_child["path"] = event["path"]
+                if event.get("event") == "task_completed":
+                    active_rows.append(deepcopy(event["outcome"]))
+                completed = len(all_rows) + len(active_rows)
+                _write_json(run / "status.json", {"status": "running", "completed_windows": len(window_results),
+                                                   "total_windows": len(protocol["windows"]),
+                                                   "recorded_tasks": completed, "total_tasks": expected_tasks,
+                                                   "active_child": active_child})
+                if progress_callback:
+                    progress_callback({"event": "task_completed" if event.get("event") == "task_completed" else "child_started",
+                                       "run_id": run_id, "path": str(run), "completed": completed, "total": expected_tasks,
+                                       "window_label": window["label"], "child_run_id": active_child.get("run_id"),
+                                       "child_path": active_child.get("path"),
+                                       "message": f"{window['label']}: {event.get('message', 'Running')}"})
+
             try:
                 if _sha256(run / "protocol.json") != protocol_hash:
                     raise ValueError("Registered validation protocol changed during execution.")
                 if _implementation_identity() != implementation:
                     raise ValueError("Research implementation changed after protocol registration.")
                 child_config = {**deepcopy(fixed), "research_scope": "exploratory", "start": window["start"], "end": window["end"]}
-                output = run_triple_experiment(child_config, run / "windows" / f"window_{index:03d}")
+                options = {}
+                if progress_callback is not None or cancel_check is not None:
+                    options["progress_callback"] = child_progress
+                if cancel_check is not None:
+                    options["cancel_check"] = cancel_check
+                output = run_triple_experiment(child_config, run / "windows" / f"window_{index:03d}", **options)
                 record.update(run_id=output["run_id"], path=output["path"])
                 if _implementation_identity() != implementation or _sha256(run / "protocol.json") != protocol_hash:
                     raise ValueError("Implementation or protocol changed while a validation window was running.")
                 rows = _window_rows(output["summary"], window, fixed)
                 success = sum(row["status"] == "completed" for row in rows)
                 record["status"] = "completed" if success == len(rows) else "partial" if success else "failed"
+            except InterruptedError:
+                raise
             except Exception as exc:
                 record.update(status="failed", error=str(exc))
                 rows = _failed_rows(window, fixed, str(exc))
@@ -210,12 +257,17 @@ def run_triple_validation(config: dict, windows: list[dict], output_root: str | 
             record["outcomes"] = rows
             all_rows.extend(rows)
             window_results.append(record)
+            active_child, active_rows = {}, []
             _write_json(run / "window_results" / f"window_{index:03d}.json", record)
             _write_json(run / "status.json", {"status": "running", "completed_windows": len(window_results),
                                                "total_windows": len(protocol["windows"]), "recorded_tasks": len(all_rows)})
             if progress_callback:
-                progress_callback({"event": "window_completed", "completed": len(window_results),
-                                   "total": len(protocol["windows"]), "window": record})
+                progress_callback({"event": "window_completed", "run_id": run_id, "path": str(run),
+                                   "completed": len(all_rows), "total": expected_tasks,
+                                   "completed_windows": len(window_results), "window": record,
+                                   "message": f"Window {window['label']}: {record['status']}"})
+            if len(window_results) < len(protocol["windows"]):
+                check_cancelled()
         successes = sum(row["status"] == "completed" for row in all_rows)
         if len(all_rows) != expected_tasks:
             raise ValueError("Validation accounting does not reconcile with the registered task count.")
@@ -236,9 +288,23 @@ def run_triple_validation(config: dict, windows: list[dict], output_root: str | 
                                            "total_windows": len(protocol["windows"]), "successful_tasks": successes,
                                            "failed_tasks": expected_tasks - successes, "total_tasks": expected_tasks})
     except BaseException as exc:
-        _write_json(run / "status.json", {"status": "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
+        status = "cancelled" if isinstance(exc, InterruptedError) else "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        known_rows = all_rows + active_rows
+        successes = sum(row["status"] == "completed" for row in known_rows)
+        partial = {"run_id": run_id, "status": status, "research_scope": SCOPE, "price_basis": "pre",
+                   "protocol_sha256": protocol_hash, "total_tasks": expected_tasks,
+                   "recorded_tasks": len(known_rows), "completed_tasks": successes,
+                   "failed_tasks": len(known_rows)-successes, "unfinished_tasks": expected_tasks-len(known_rows),
+                   "windows": window_results, "active_child": active_child, "active_outcomes": active_rows,
+                   "by_cost_window": [row for item in window_results for row in item["by_cost"]]}
+        _write_json(run / "partial_result.json", partial)
+        paths = [run / "protocol.json", run / "protocol.sha256", run / "partial_result.json",
+                 *sorted((run / "window_results").glob("*.json"))]
+        _write_json(run / "artifacts.json", {"sha256": {path.relative_to(run).as_posix(): _sha256(path) for path in paths}})
+        _write_json(run / "status.json", {"status": status,
                                            "error": str(exc), "completed_windows": len(window_results),
-                                           "total_windows": len(protocol["windows"]), "recorded_tasks": len(all_rows)})
+                                           "total_windows": len(protocol["windows"]), "recorded_tasks": len(known_rows),
+                                           "total_tasks": expected_tasks, "active_child": active_child})
         raise
     return {"run_id": run_id, "status": status, "path": str(run), "summary": summary}
 

@@ -253,7 +253,13 @@ def _verified_child(output, case_root: Path, request: dict, implementation: str)
 
 
 def run_triple_study(config: dict, cases: list[dict], output_root: str | Path, *,
-                     progress_callback: Callable[[dict], None] | None = None) -> dict:
+                     progress_callback: Callable[[dict], None] | None = None,
+                     cancel_check: Callable[[], bool] | None = None) -> dict:
+    """Execute registered cases with task-level progress and durable cancellation.
+
+    Cancellation is checked at each complete stock/cost boundary by the child,
+    with its partial path retained in the parent; no unfinished case is scored.
+    """
     protocol = normalize_study_protocol(config, cases)
     fixed = protocol["fixed_configuration"]
     implementation = _implementation_identity()
@@ -268,20 +274,56 @@ def run_triple_study(config: dict, cases: list[dict], output_root: str | Path, *
     (run / "protocol.sha256").write_text(protocol_hash + "\n", encoding="ascii")
     _json(run / "status.json", {"status": "running", "completed_cases": 0, "total_cases": len(protocol["cases"])})
     records, child_manifests, primary_rows = [], {}, []
+    active_child, active_rows = {}, []
+    recorded_tasks = 0
 
     def check_identity():
         if _sha(run / "protocol.json") != protocol_hash or _implementation_identity() != implementation or _sha(Path(__file__)) != protocol["orchestration_sha256"]:
             raise ValueError("Study protocol or implementation changed after registration.")
 
+    def check_cancelled():
+        if cancel_check is not None and cancel_check():
+            raise InterruptedError("Parameter/filter study cancelled; completed cases and child tasks are preserved.")
+
     try:
+        if progress_callback:
+            progress_callback({"event": "run_started", "run_id": run_id, "path": str(run),
+                               "completed": 0, "total": protocol["total_tasks"], "message": "Registered parameter/filter study"})
+        check_cancelled()
         for case in protocol["cases"]:
+            check_cancelled()
+            active_child, active_rows = {"case_id": case["id"]}, []
             record = {"id": case["id"], "label": case["label"], "variant": case["variant"],
                       "settings": case["resolved_settings"], "status": "running", "child_run_id": None, "child_path": None}
+
+            def child_progress(event):
+                if event.get("run_id"):
+                    active_child["run_id"] = event["run_id"]
+                if event.get("path"):
+                    active_child["path"] = event["path"]
+                if event.get("event") == "task_completed":
+                    active_rows.append(deepcopy(event["outcome"]))
+                completed = recorded_tasks + len(active_rows)
+                _json(run / "status.json", {"status": "running", "completed_cases": len(records),
+                                            "total_cases": len(protocol["cases"]), "recorded_tasks": completed,
+                                            "total_tasks": protocol["total_tasks"], "active_child": active_child})
+                if progress_callback:
+                    progress_callback({"event": "task_completed" if event.get("event") == "task_completed" else "child_started",
+                                       "run_id": run_id, "path": str(run), "completed": completed, "total": protocol["total_tasks"],
+                                       "case_id": case["id"], "child_run_id": active_child.get("run_id"),
+                                       "child_path": active_child.get("path"),
+                                       "message": f"{case['label']}: {event.get('message', 'Running')}"})
+
             try:
                 check_identity()
                 request = {**deepcopy(fixed), "research_scope": "exploratory", "settings": case["resolved_settings"], "variant": case["variant"]}
                 case_root = run / "cases" / case["id"]
-                output = run_triple_experiment(request, case_root)
+                options = {}
+                if progress_callback is not None or cancel_check is not None:
+                    options["progress_callback"] = child_progress
+                if cancel_check is not None:
+                    options["cancel_check"] = cancel_check
+                output = run_triple_experiment(request, case_root, **options)
                 record.update(child_run_id=output["run_id"], child_path=output["path"])
                 check_identity()
                 summary, manifest, digest = _verified_child(output, case_root, request, implementation)
@@ -289,6 +331,8 @@ def run_triple_study(config: dict, cases: list[dict], output_root: str | Path, *
                 child_manifests[manifest.relative_to(run).as_posix()] = digest
                 successes = sum(row["status"] == "completed" for row in rows)
                 record["status"] = "completed" if successes == len(rows) else "partial" if successes else "failed"
+            except InterruptedError:
+                raise
             except Exception as exc:
                 record.update(status="failed", error=str(exc))
                 rows = _failure_rows(fixed, str(exc))
@@ -297,9 +341,16 @@ def run_triple_study(config: dict, cases: list[dict], output_root: str | Path, *
             record.update(outcomes=rows, by_cost=_distributions(rows, fixed), paired_vs_primary=_paired(rows, primary_rows, fixed))
             _json(run / "case_results" / f"{case['id']}.json", record)
             records.append(record)
+            recorded_tasks += len(rows)
+            active_child, active_rows = {}, []
             _json(run / "status.json", {"status": "running", "completed_cases": len(records), "total_cases": len(protocol["cases"])})
             if progress_callback:
-                progress_callback({"event": "case_completed", "completed": len(records), "total": len(protocol["cases"]), "case": record})
+                progress_callback({"event": "case_completed", "run_id": run_id, "path": str(run),
+                                   "completed": recorded_tasks, "total": protocol["total_tasks"],
+                                   "completed_cases": len(records), "case": record,
+                                   "message": f"Case {case['label']}: {record['status']}"})
+            if len(records) < len(protocol["cases"]):
+                check_cancelled()
         check_identity()
         total = sum(len(case["outcomes"]) for case in records)
         successes = sum(row["status"] == "completed" for case in records for row in case["outcomes"])
@@ -318,7 +369,21 @@ def run_triple_study(config: dict, cases: list[dict], output_root: str | Path, *
         _json(run / "status.json", {"status": status, "completed_cases": len(records), "total_cases": len(protocol["cases"]),
                                     "successful_tasks": successes, "failed_tasks": total-successes, "total_tasks": total})
     except BaseException as exc:
-        _json(run / "status.json", {"status": "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
+        status = "cancelled" if isinstance(exc, InterruptedError) else "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        known_rows = [row for case in records for row in case["outcomes"]] + active_rows
+        successes = sum(row["status"] == "completed" for row in known_rows)
+        partial = {"run_id": run_id, "status": status, "research_scope": SCOPE, "price_basis": "pre",
+                   "protocol_sha256": protocol_hash, "total_tasks": protocol["total_tasks"],
+                   "recorded_tasks": len(known_rows), "completed_tasks": successes,
+                   "failed_tasks": len(known_rows)-successes, "unfinished_tasks": protocol["total_tasks"]-len(known_rows),
+                   "cases": [{key: value for key, value in case.items() if key != "outcomes"} for case in records],
+                   "active_child": active_child, "active_outcomes": active_rows}
+        _json(run / "partial_result.json", partial)
+        files = [run / "protocol.json", run / "protocol.sha256", run / "partial_result.json",
+                 *sorted((run / "case_results").glob("*.json"))]
+        _json(run / "artifacts.json", {"sha256": {**{p.relative_to(run).as_posix(): _sha(p) for p in files}, **child_manifests},
+                                       "child_manifests": child_manifests})
+        _json(run / "status.json", {"status": status,
                                     "error": str(exc), "completed_cases": len(records), "total_cases": len(protocol["cases"])})
         raise
     return {"run_id": run_id, "status": status, "path": str(run), "summary": summary}
@@ -333,6 +398,8 @@ def main() -> None:
     config = _read(_local(args.config, file_only=True))
     cases = _read(_local(args.cases, file_only=True))
     def progress(event):
+        if event.get("event") != "case_completed":
+            return
         case = event["case"]
         print(json.dumps({"event": event["event"], "completed": event["completed"], "total": event["total"],
                           "case_id": case["id"], "status": case["status"]}, ensure_ascii=False), flush=True)

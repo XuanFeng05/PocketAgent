@@ -27,6 +27,8 @@ def main() -> None:
         config.pop("symbol", None)
 
     def progress(event):
+        if event.get("event") != "task_completed":
+            return
         row = event["outcome"]
         print(json.dumps({"event": event["event"], "completed": event["completed"], "total": event["total"],
                           "symbol": row["symbol"], "cost_bps": row["cost_bps"], "status": row["status"],

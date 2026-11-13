@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "strategy_config": "config/research/multiscale_us500_v1.json",
+  "symbols": ["SW", "FERG", "TLN"],
+  "scope": "All registered parameter sets in both evaluation periods; retain original training-frozen selected IDs and500 initial-capital sleeves.",
+  "treatment": "Replace each listed symbol's entire account with the same daily FrenchRF cash proxy. Keep source observations and original primary results. Do not repair prices, delete accounts, substitute stocks or reselect candidates.",
+  "statistics": "Repeat the main protocol's full-family diagnostics on the cash-substitution NAVs. Compare both data-handling scenarios together; do not choose whichever is favorable.",
+  "benchmark": "Additionally compute first-eligible-entry buy-and-hold, matching prior-close100-complete-week readiness, vendor-price gate and tradeability. Report both original and suspect-account cash-substitution versions; they do not match strategy position sizes.",
+  "evidence": {
+    "SW": {
+      "url": "https://www.smurfitwestrock.com/newsroom/press-releases/2024/smurfit-westrock-makes-its-debut-in-new-york-and-london",
+      "issue": "Issuer NYSE debut occurs after the start of the vendor history; predecessor/venue continuity and long zero-volume stretches require caution."
+    },
+    "FERG": {
+      "url": "https://www.corporate.ferguson.com/pressroom/news-releases/news-details/2022/Fergusons-Primary-Listing-Now-on-the-NYSE-As-It-Completes-Transfer-of-Listing-Category-05-12-2022/default.aspx",
+      "issue": "Additional and primary NYSE listing changes occur after the start of vendor history; earlier venue and volume lineage require caution."
+    },
+    "TLN": {
+      "url": "https://www.sec.gov/Archives/edgar/data/1622536/000162828024031490/talen424b3.htm",
+      "issue": "OTC-to-Nasdaq trading history continuity requires caution; vendor observations predate the Nasdaq listing."
+    }
+  },
+  "limitations": [
+    "Cash substitution is a conservative availability sensitivity, not corrected historical prices or an assertion that all other data lineages are verified.",
+    "Current-survivor and endpoint-screening biases remain; these cannot be repaired by bootstrap significance tests.",
+    "Source zero volume is not independently proven to be an exchange suspension.",
+    "Extra data-handling/financing scenarios are disclosed separately from the registered parameter-family attempt count."
+  ]
+}

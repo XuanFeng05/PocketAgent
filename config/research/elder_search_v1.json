@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "research_id": "elder_us100_v1",
+  "market": "US",
+  "reference": "Elder 1993 Trading for a Living sections 43/47/48; daily-only long-side approximation, not verbatim reproduction",
+  "universe": "config/universe/us_research100.txt",
+  "data_root": "runtime_layer/data_us_research",
+  "output": "runtime_layer/reports/elder_search_v1",
+  "train": [
+    "2022-01-01",
+    "2023-12-31"
+  ],
+  "validation": {
+    "period": [
+      "2024-01-01",
+      "2025-12-31"
+    ],
+    "fresh_accounts": true,
+    "all_candidates_reported": true,
+    "no_retuning_after_validation": true,
+    "selected_cost_scenarios_bps": [
+      0,
+      5,
+      10,
+      20
+    ],
+    "multiple_testing": "synchronized circular block bootstrap of excess returns versus RF; Holm adjustment for all72 and a centered max-mean family test",
+    "bootstrap_repetitions": 3000,
+    "bootstrap_block_sessions": 20,
+    "seed": 20261113,
+    "cash_interest_sensitivity_selected": true
+  },
+  "2026": "data_quality_only",
+  "grid": {
+    "weekly_filter": [
+      "hist",
+      "ema",
+      "impulse"
+    ],
+    "force_span": [
+      2,
+      3
+    ],
+    "exit_mode": [
+      "position",
+      "swing",
+      "either"
+    ],
+    "stop_mode": [
+      "fixed",
+      "protect50",
+      "protect70",
+      "atr3"
+    ]
+  },
+  "fixed": {
+    "risk_fraction": 0.01,
+    "cost_bps": 10,
+    "warmup_weeks": 100,
+    "entry_buffer_adjusted": 0.01
+  },
+  "candidate_count": 72,
+  "baselines": [
+    {
+      "id": "classic_position",
+      "weekly_filter": "hist",
+      "force_span": 2,
+      "exit_mode": "position",
+      "stop_mode": "protect50"
+    },
+    {
+      "id": "classic_swing",
+      "weekly_filter": "hist",
+      "force_span": 2,
+      "exit_mode": "either",
+      "stop_mode": "protect50"
+    }
+  ],
+  "selection": {
+    "allowed_information": "2022-2023 only; freeze selected IDs before generating/inspecting 2024-2025 candidate results",
+    "minimum_closed_trades": 200,
+    "balanced": "training CAGR / max(training MDD, 0.01), maximize; ties higher net profit factor, then stable id",
+    "high_win": "highest training net win rate among eligible positive-return and profit-factor>1 candidates; if none, report none",
+    "high_return": "highest training cumulative return among eligible candidates",
+    "top_balanced_count": 5,
+    "pareto_objectives": [
+      "higher CAGR",
+      "higher net win rate",
+      "lower MDD"
+    ],
+    "not_untouched": "All 2022-2025 market history previously inspected; chronological retrospective diagnostic only"
+  },
+  "assumptions": [
+    "Only completed calendar weeks; entry/exit signals use prior session close",
+    "0.01 is an adjusted-price research buffer, not a reconstructed historical exchange tick",
+    "Initial stop is prior complete session low minus buffer; entry-day final low is never used at entry",
+    "Break-even activation at 1 entry-time ADR20; protection of 50/70 percent favorable price excursion; book provides principles, these precise thresholds are mechanical assumptions",
+    "Stop changes based on close-time information take effect next session; entry-day high is not assumed to occur after an intraday entry",
+    "1 percent planned sleeve equity risk including fees; no leverage; gaps may exceed planned risk",
+    "100 equal initial independent sleeves, no cross-stock capital sharing/rebalancing; idle cash rate initially zero and reported",
+    "Impulse, EFI3, ATR3, 70percent protection and exit combinations are research variants, not all original1993 rules",
+    "Long-only scope; does not test the book's short-side system or pyramiding",
+    "Current survivor universe, four already-viewed years, proportional friction and daily path ambiguity limit inference"
+  ]
+}

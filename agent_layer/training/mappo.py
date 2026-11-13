@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Any, Mapping
 
 import torch
 from torch import Tensor
@@ -37,7 +37,7 @@ class MAPPOLoss:
 
 
 def compute_mappo_loss(
-    model: MultiFrequencyMAPPO,
+    model: MultiFrequencyMAPPO | Any,
     *,
     observation_inputs: Mapping[str, object],
     directions: Tensor,
@@ -50,11 +50,18 @@ def compute_mappo_loss(
     config: MAPPOConfig | None = None,
 ) -> MAPPOLoss:
     cfg = config or MAPPOConfig()
-    evaluation = model.evaluate_actions(
-        directions=directions,
-        sizes=sizes,
-        **observation_inputs,
-    )
+    if hasattr(model, "evaluate_actions"):
+        evaluation = model.evaluate_actions(
+            directions=directions,
+            sizes=sizes,
+            **observation_inputs,
+        )
+    else:
+        evaluation = model(
+            directions=directions,
+            sizes=sizes,
+            **observation_inputs,
+        )
     mask = active_mask.to(dtype=evaluation.log_prob.dtype)
     denominator = mask.sum().clamp(min=1.0)
     normalized_advantages = (advantages - advantages.mean()) / (

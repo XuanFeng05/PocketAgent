@@ -981,6 +981,11 @@ def _load_snapshot_feature_rows_batched(
                 decision,
                 freq=str(row.freq),
                 cutoff=cutoff,
+                stable_end=(
+                    pd.Timestamp(row.stable_end_datetime)
+                    if pd.notna(row.stable_end_datetime)
+                    else None
+                ),
                 day_values=base_lookup.get(
                     (str(row.symbol), str(row.adjust), session_day)
                 ),
@@ -1200,6 +1205,7 @@ def _fast_snapshot_row_from_arrays(
     *,
     freq: str,
     cutoff: pd.Timestamp,
+    stable_end: pd.Timestamp | None = None,
     day_values: dict[str, np.ndarray] | None,
     daily_values: dict[str, np.ndarray] | None,
 ) -> dict[str, Any] | None:
@@ -1215,10 +1221,20 @@ def _fast_snapshot_row_from_arrays(
         if not visible_count or day_values is None:
             return None
         expected = {"15min": 3, "30min": 6, "60min": 12}[freq]
-        partial = visible_count % expected
-        if partial == 0:
+        if stable_end is not None and pd.notna(stable_end):
+            start = int(
+                np.searchsorted(
+                    day_values["datetime"],
+                    int(pd.Timestamp(stable_end).value),
+                    side="right",
+                )
+            )
+            partial = visible_count - start
+        else:
+            partial = visible_count % expected
+            start = visible_count - partial
+        if partial <= 0:
             return None
-        start = visible_count - partial
         previous = day_values["close"][start - 1] if start else np.nan
         close = day_values["close"][visible_count - 1]
         open_ = day_values["open"][start]
@@ -1273,45 +1289,50 @@ def _fast_snapshot_row_from_arrays(
     daily_row["pctChg"] = _safe_snapshot_return(daily_row["close"], daily_row["open"])
     if freq == "daily":
         return daily_row
-    if freq != "weekly":
+    if freq not in {"weekly", "monthly"}:
         return None
 
-    week_start_ns = int(
-        (decision_time.normalize() - pd.Timedelta(days=decision_time.weekday())).value
-    )
     day_start_ns = int(decision_time.normalize().value)
+    if freq == "weekly":
+        period_start_ns = int(
+            (decision_time.normalize() - pd.Timedelta(days=decision_time.weekday())).value
+        )
+        expected_days = 5.0
+    else:
+        period_start_ns = int(decision_time.normalize().replace(day=1).value)
+        expected_days = 21.0
     if daily_values is None:
         prior_start = prior_stop = 0
     else:
-        prior_start = int(np.searchsorted(daily_values["datetime"], week_start_ns, side="left"))
+        prior_start = int(np.searchsorted(daily_values["datetime"], period_start_ns, side="left"))
         prior_stop = int(np.searchsorted(daily_values["datetime"], day_start_ns, side="left"))
     prior_count = max(0, prior_stop - prior_start)
     if prior_count:
-        weekly_open = daily_values["open"][prior_start]
-        weekly_high = max(float(np.nanmax(daily_values["high"][prior_start:prior_stop])), daily_row["high"])
-        weekly_low = min(float(np.nanmin(daily_values["low"][prior_start:prior_stop])), daily_row["low"])
-        weekly_volume = float(np.nansum(daily_values["volume"][prior_start:prior_stop])) + daily_row["volume"]
-        weekly_amount = float(np.nansum(daily_values["amount"][prior_start:prior_stop])) + daily_row["amount"]
+        period_open = daily_values["open"][prior_start]
+        period_high = max(float(np.nanmax(daily_values["high"][prior_start:prior_stop])), daily_row["high"])
+        period_low = min(float(np.nanmin(daily_values["low"][prior_start:prior_stop])), daily_row["low"])
+        period_volume = float(np.nansum(daily_values["volume"][prior_start:prior_stop])) + daily_row["volume"]
+        period_amount = float(np.nansum(daily_values["amount"][prior_start:prior_stop])) + daily_row["amount"]
     else:
-        weekly_open = daily_row["open"]
-        weekly_high = daily_row["high"]
-        weekly_low = daily_row["low"]
-        weekly_volume = daily_row["volume"]
-        weekly_amount = daily_row["amount"]
+        period_open = daily_row["open"]
+        period_high = daily_row["high"]
+        period_low = daily_row["low"]
+        period_volume = daily_row["volume"]
+        period_amount = daily_row["amount"]
     return {
         "symbol": symbol,
         "bar_datetime": decision_time.normalize(),
-        "freq": "weekly",
+        "freq": freq,
         "adjust": adjust,
-        "open": float(weekly_open),
-        "high": float(weekly_high),
-        "low": float(weekly_low),
+        "open": float(period_open),
+        "high": float(period_high),
+        "low": float(period_low),
         "close": float(daily_row["close"]),
-        "volume": float(weekly_volume),
-        "amount": float(weekly_amount),
-        "pctChg": _safe_snapshot_return(daily_row["close"], weekly_open),
+        "volume": float(period_volume),
+        "amount": float(period_amount),
+        "pctChg": _safe_snapshot_return(daily_row["close"], period_open),
         "turn": np.nan,
-        "progress": min(1.0, (prior_count + 1) / 5.0),
+        "progress": min(1.0, (prior_count + 1) / expected_days),
     }
 
 
@@ -1479,19 +1500,26 @@ def _build_lazy_decision_snapshot(
     if freq == "daily":
         return partial_daily
 
-    week_start = day_start - pd.Timedelta(days=day_start.weekday())
+    if freq not in {"weekly", "monthly"}:
+        return pd.DataFrame()
+
+    period_start = (
+        day_start - pd.Timedelta(days=day_start.weekday())
+        if freq == "weekly"
+        else day_start.replace(day=1)
+    )
     history = conn.execute(
         "SELECT * EXCLUDE (market_row_id) FROM market_bars "
         "WHERE symbol = ? AND freq = 'daily' AND adjust = ? "
         "AND bar_datetime >= ? AND bar_datetime < ? ORDER BY bar_datetime",
-        [values["symbol"], values["adjust"], week_start, day_start],
+        [values["symbol"], values["adjust"], period_start, day_start],
     ).fetchdf().rename(columns={"bar_datetime": "datetime"})
     parts = [part for part in (history, partial_daily) if part is not None and not part.empty]
     if not parts:
         return pd.DataFrame()
     return aggregate_ohlcv_from_base(
         pd.concat([part.dropna(axis=1, how="all") for part in parts], ignore_index=True),
-        "weekly",
+        freq,
         base_freq="daily",
     ).tail(1)
 
@@ -1604,8 +1632,8 @@ def _load_stable_bars(
                 result[freq] = stored
             elif freq in {"15min", "30min", "60min"}:
                 result[freq] = aggregate_ohlcv_from_base(base, freq, base_freq=trade_freq)
-            elif freq == "weekly":
-                result[freq] = aggregate_ohlcv_from_base(daily, "weekly", base_freq="daily")
+            elif freq in {"weekly", "monthly"}:
+                result[freq] = aggregate_ohlcv_from_base(daily, freq, base_freq="daily")
             else:
                 raise ValueError(f"Unsupported compact frequency: {freq}")
     return result
@@ -1645,6 +1673,9 @@ def _build_decision_index_fast(
             elif freq == "weekly":
                 decision_times = frame.loc[positions, "decision_time"]
                 cutoffs = decision_times.dt.normalize() - pd.to_timedelta(decision_times.dt.weekday, unit="D") - pd.Timedelta(microseconds=1)
+            elif freq == "monthly":
+                decision_times = frame.loc[positions, "decision_time"]
+                cutoffs = decision_times.dt.to_period("M").dt.start_time - pd.Timedelta(microseconds=1)
             else:
                 cutoffs = frame.loc[positions, "_cutoff"]
             cutoff_values = cutoffs.to_numpy(dtype="datetime64[ns]")
@@ -1661,8 +1692,10 @@ def _build_decision_index_fast(
         elif freq in {"15min", "30min", "60min"}:
             stable_end = pd.to_datetime(frame["stable_end_datetime"], errors="coerce")
             snapshot_required = (~is_open) & (stable_end.isna() | stable_end.lt(frame["_cutoff"]))
-        else:
+        elif freq in {"daily", "weekly", "monthly"}:
             snapshot_required = pd.Series(True, index=frame.index)
+        else:
+            snapshot_required = pd.Series(False, index=frame.index)
         frame["snapshot_required"] = snapshot_required.astype(bool)
         frame["snapshot_id"] = [
             f"{decision_id}|{freq}" if required else None
@@ -1751,6 +1784,8 @@ def _build_decision_index(
                 stable_cutoff = decision_time.normalize() - pd.Timedelta(microseconds=1)
             elif freq == "weekly":
                 stable_cutoff = decision_time.normalize() - pd.Timedelta(days=decision_time.weekday(), microseconds=1)
+            elif freq == "monthly":
+                stable_cutoff = decision_time.normalize().replace(day=1) - pd.Timedelta(microseconds=1)
             else:
                 stable_cutoff = cutoff
             count = int(np.searchsorted(stable_times, np.datetime64(stable_cutoff), side="right"))
@@ -1855,12 +1890,19 @@ def _decision_snapshot(
     if freq == "daily":
         return partial_daily
 
+    if freq not in {"weekly", "monthly"}:
+        return None
+
     decision_time = pd.Timestamp(decision.decision_time)
-    week_start = decision_time.normalize() - pd.Timedelta(days=decision_time.weekday())
+    period_start = (
+        decision_time.normalize() - pd.Timedelta(days=decision_time.weekday())
+        if freq == "weekly"
+        else decision_time.normalize().replace(day=1)
+    )
     history = daily_symbol.copy()
     history["datetime"] = pd.to_datetime(history["datetime"], errors="coerce")
     history = history.loc[
-        (history["datetime"] >= week_start)
+        (history["datetime"] >= period_start)
         & (history["datetime"].dt.date < decision_time.date())
     ].copy()
     parts = [part for part in (history, partial_daily) if part is not None and not part.empty]
@@ -1868,6 +1910,6 @@ def _decision_snapshot(
         return None
     return aggregate_ohlcv_from_base(
         pd.concat([part.dropna(axis=1, how="all") for part in parts], ignore_index=True),
-        "weekly",
+        freq,
         base_freq="daily",
     ).tail(1)

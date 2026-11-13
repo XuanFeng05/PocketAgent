@@ -1,17 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import datetime, timezone
 import hashlib
 import json
+from collections.abc import Iterable
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import torch
 
 from agent_layer.environment import ExecutionConfig
-from agent_layer.models import SingleSymbolMultiFrequencyPolicy, SingleSymbolMultiFrequencyPolicyConfig
+from agent_layer.models import (
+    SingleSymbolMultiFrequencyPolicy,
+    SingleSymbolMultiFrequencyPolicyConfig,
+)
 from agent_layer.training import MAPPOConfig
+
+ACTION_CONTRACT_VERSION = 2
 
 
 def universe_hash(symbols: Iterable[str]) -> str:
@@ -37,6 +43,7 @@ def save_agent_checkpoint(
     symbols = tuple(str(symbol).upper() for symbol in universe)
     payload = {
         "format_version": 1,
+        "action_contract_version": ACTION_CONTRACT_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "schema_hash": schema_hash,
         "universe": symbols,
@@ -78,6 +85,18 @@ def load_agent_checkpoint(
     map_location: str | torch.device = "cpu",
 ) -> tuple[SingleSymbolMultiFrequencyPolicy, dict[str, Any]]:
     payload = torch.load(Path(path), map_location=map_location, weights_only=False)
+    # Version 1 checkpoints contain compatible weights, but their historical
+    # policy mapped the raw size distribution directly to [0, 1].  Loading
+    # them now intentionally upgrades inference to the executable-size
+    # contract while preserving the network parameters.
+    stored_action_contract_version = int(payload.get("action_contract_version") or 1)
+    if stored_action_contract_version > ACTION_CONTRACT_VERSION:
+        raise ValueError(
+            "Checkpoint action contract is newer than this PocketAgent build: "
+            f"{stored_action_contract_version} > {ACTION_CONTRACT_VERSION}."
+        )
+    payload["stored_action_contract_version"] = stored_action_contract_version
+    payload["action_contract_version"] = ACTION_CONTRACT_VERSION
     schema_hash = str(payload.get("schema_hash") or "")
     if expected_schema_hash is not None and schema_hash != expected_schema_hash:
         raise ValueError(

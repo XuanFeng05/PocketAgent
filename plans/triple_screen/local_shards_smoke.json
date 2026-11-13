@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "mode": "triple_screen",
+  "source_type": "market",
+  "source_path": "runtime_layer/data",
+  "adjust": "pre",
+  "start": "2022-01-04",
+  "end": "2024-12-31",
+  "settings": {
+    "version": "triple_screen_pre_v1",
+    "macd_fast": 12,
+    "macd_slow": 26,
+    "macd_signal": 9,
+    "force_span": 2,
+    "warmup_weeks": 100,
+    "cost_bps": 0.0
+  },
+  "research_scope": "exploratory",
+  "cost_scenarios_bps": [
+    0,
+    10
+  ],
+  "notes": "Local real-data sharding/resume integration check; first three frozen symbols, no performance selection.",
+  "symbols": [
+    "000001.SZ",
+    "000002.SZ",
+    "000063.SZ"
+  ],
+  "variant": "full"
+}

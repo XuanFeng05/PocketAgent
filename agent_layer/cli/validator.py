@@ -107,12 +107,18 @@ class AgentValidationWorker:
             if not set(task.symbols).issubset(training_universe):
                 raise ValueError("Validation subset is not contained in the checkpoint universe.")
 
-            plans: list[tuple[str, AgentTimelineLoader, list[Any], int]] = []
+            plans: list[tuple[str, AgentTimelineLoader, SingleSymbolTradingEnv]] = []
             total_steps = 0
             for symbol in task.symbols:
                 symbol_loader = base_loader.for_universe((symbol,))
                 dates = symbol_loader.trading_dates()
-                splits = build_walk_forward_splits(dates)
+                splits = build_walk_forward_splits(
+                    dates,
+                    validation_days=self.config.split.validation_days,
+                    test_days=self.config.split.test_days,
+                    embargo_days=self.config.split.embargo_days,
+                    folds=self.config.split.folds,
+                )
                 fold = splits.folds[self.config.fold - 1]
                 validation_dates = [
                     date for date in dates
@@ -129,8 +135,9 @@ class AgentValidationWorker:
                     drawdown_penalty=self.config.reward.drawdown_penalty,
                     turnover_penalty=self.config.reward.turnover_penalty,
                     invalid_action_penalty=self.config.reward.invalid_action_penalty,
+                    enforce_action_contract=True,
                 )
-                plans.append((str(symbol).upper(), symbol_loader, validation_dates, len(environment.keys)))
+                plans.append((str(symbol).upper(), symbol_loader, environment))
                 total_steps += len(environment.keys)
             if not plans:
                 raise ValueError("Validation task contains no single-symbol trading dates.")
@@ -165,17 +172,7 @@ class AgentValidationWorker:
 
             symbol_results: list[dict[str, Any]] = []
             data_performance = {"chunks": 0, "steps": 0, "load_seconds": 0.0}
-            for symbol, symbol_loader, validation_dates, _ in plans:
-                environment = SingleSymbolTradingEnv(
-                    symbol_loader,
-                    start=validation_dates[0],
-                    end=validation_dates[-1],
-                    execution_config=self.config.execution,
-                    reward_scale=self.config.reward.scale,
-                    drawdown_penalty=self.config.reward.drawdown_penalty,
-                    turnover_penalty=self.config.reward.turnover_penalty,
-                    invalid_action_penalty=self.config.reward.invalid_action_penalty,
-                )
+            for symbol, symbol_loader, environment in plans:
                 item = evaluate_policy(
                     environment,
                     model,
@@ -221,6 +218,7 @@ class AgentValidationWorker:
                 },
             )
             self._record_result(task, result, result_path, best_path)
+            self._record_checkpoint_validation(task, result, result_path, best_path)
             self.queue.update_status(
                 status="completed",
                 pid=os.getpid(),
@@ -320,6 +318,34 @@ class AgentValidationWorker:
         }
         self.store.update_status(self.run_id, result=run_result)
 
+    def _record_checkpoint_validation(
+        self,
+        task: ValidationTask,
+        result: dict[str, Any],
+        result_path: Path,
+        best_path: Path | None,
+    ) -> None:
+        checkpoint = Path(task.source_checkpoint)
+        manifest_path = checkpoint.with_suffix(".json")
+        if not manifest_path.exists():
+            return
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return
+        experiment = dict(manifest.get("experiment") or {})
+        key = "validation" if task.kind == "final" else "quick_validation"
+        experiment[key] = {
+            "status": "completed",
+            "task_id": task.task_id,
+            "kind": task.kind,
+            "result_path": str(result_path),
+            "best_checkpoint": str(best_path) if best_path else None,
+            **result,
+        }
+        manifest["experiment"] = experiment
+        _write_json_atomic(manifest_path, manifest)
+
     @staticmethod
     def _resolve_device(requested: str) -> str:
         if requested == "auto":
@@ -355,13 +381,47 @@ def _aggregate_single_symbol_results(results: list[dict[str, Any]]) -> dict[str,
     }
     return {
         "metrics": metrics,
-        "daily_nav": (),
+        "daily_nav": _aggregate_daily_nav(results),
         "orders": sum(int(item.get("orders") or 0) for item in results),
         "blocked_orders": sum(int(item.get("blocked_orders") or 0) for item in results),
         "steps": sum(int(item.get("steps") or 0) for item in results),
         "symbols": len(results),
         "symbol_results": results,
     }
+
+
+def _aggregate_daily_nav(results: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+    values_by_date: dict[str, list[float]] = {}
+    for item in results:
+        for row in item.get("daily_nav") or ():
+            if not isinstance(row, dict):
+                continue
+            date = str(row.get("date") or "").strip()
+            if not date:
+                continue
+            try:
+                nav = float(row.get("nav"))
+            except (TypeError, ValueError):
+                continue
+            values_by_date.setdefault(date, []).append(nav)
+    return tuple(
+        {
+            "date": date,
+            "nav": sum(values) / len(values),
+            "symbol_count": len(values),
+        }
+        for date, values in sorted(values_by_date.items())
+        if values
+    )
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def main() -> int:

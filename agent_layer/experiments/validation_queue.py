@@ -75,6 +75,10 @@ class ValidationQueue:
         return self.root / "pending.json"
 
     @property
+    def pending_dir(self) -> Path:
+        return self.root / "pending"
+
+    @property
     def active_path(self) -> Path:
         return self.root / "active.json"
 
@@ -117,22 +121,22 @@ class ValidationQueue:
 
     def submit(self, task: ValidationTask) -> None:
         with self._queue_lock():
-            previous = None
-            if self.pending_path.exists():
-                previous = ValidationTask.from_payload(self._read_json(self.pending_path))
-            self._write_json(self.pending_path, task.payload())
-            if previous is not None:
-                Path(previous.checkpoint_path).unlink(missing_ok=True)
+            self.pending_dir.mkdir(parents=True, exist_ok=True)
+            self._write_json(self._pending_task_path(task), task.payload())
 
     def claim(self) -> ValidationTask | None:
         with self._queue_lock():
-            if not self.pending_path.exists():
+            if self.active_path.exists():
                 return None
+            selected = self._next_pending_task_locked()
+            if selected is None:
+                return None
+            source_path, task = selected
             try:
-                self.pending_path.replace(self.active_path)
+                source_path.replace(self.active_path)
             except FileNotFoundError:
                 return None
-            return ValidationTask.from_payload(self._read_json(self.active_path))
+            return task
 
     def complete(self, task: ValidationTask) -> None:
         with self._queue_lock():
@@ -149,13 +153,16 @@ class ValidationQueue:
     def read_status(self) -> dict[str, Any]:
         with self._queue_lock():
             status = self._read_json(self.status_path)
-            if self.pending_path.exists():
-                try:
-                    pending = self._read_json(self.pending_path)
-                    status["pending_task_id"] = pending.get("task_id")
-                    status["pending_kind"] = pending.get("kind")
-                except (OSError, ValueError, json.JSONDecodeError):
-                    pass
+            pending = self._pending_tasks_locked()
+            if pending:
+                _, task = pending[0]
+                status["pending_task_id"] = task.task_id
+                status["pending_kind"] = task.kind
+                status["pending_count"] = len(pending)
+            else:
+                status.pop("pending_task_id", None)
+                status.pop("pending_kind", None)
+                status["pending_count"] = 0
             return status
 
     def update_status(self, **updates: Any) -> dict[str, Any]:
@@ -239,18 +246,16 @@ class ValidationQueue:
         should_launch = False
         with self._queue_lock():
             if restart_pending and self.active_path.exists():
-                if self.pending_path.exists():
-                    try:
-                        abandoned = ValidationTask.from_payload(
-                            self._read_json(self.active_path)
-                        )
-                        Path(abandoned.checkpoint_path).unlink(missing_ok=True)
-                    except (OSError, ValueError, json.JSONDecodeError):
-                        pass
+                try:
+                    active = ValidationTask.from_payload(self._read_json(self.active_path))
+                    if Path(active.checkpoint_path).exists():
+                        self.pending_dir.mkdir(parents=True, exist_ok=True)
+                        self.active_path.replace(self._pending_task_path(active))
+                    else:
+                        self.active_path.unlink(missing_ok=True)
+                except (OSError, ValueError, json.JSONDecodeError):
                     self.active_path.unlink(missing_ok=True)
-                else:
-                    self.active_path.replace(self.pending_path)
-            should_launch = bool(restart_pending and self.pending_path.exists())
+            should_launch = bool(restart_pending and self._pending_tasks_locked())
 
         if should_launch:
             return self.ensure_worker()
@@ -261,6 +266,44 @@ class ValidationQueue:
                 message="Validation worker stopped before completing its task",
             )
         return status
+
+    def _pending_task_path(self, task: ValidationTask) -> Path:
+        return self.pending_dir / f"{task.task_id}.json"
+
+    def _pending_tasks_locked(self) -> list[tuple[Path, ValidationTask]]:
+        tasks: list[tuple[Path, ValidationTask]] = []
+        if self.pending_path.exists():
+            try:
+                tasks.append(
+                    (
+                        self.pending_path,
+                        ValidationTask.from_payload(self._read_json(self.pending_path)),
+                    )
+                )
+            except (OSError, ValueError, json.JSONDecodeError):
+                self.pending_path.unlink(missing_ok=True)
+        if self.pending_dir.exists():
+            for path in self.pending_dir.glob("*.json"):
+                try:
+                    tasks.append((path, ValidationTask.from_payload(self._read_json(path))))
+                except (OSError, ValueError, json.JSONDecodeError):
+                    path.unlink(missing_ok=True)
+        return sorted(
+            tasks,
+            key=lambda item: (
+                item[1].requested_at,
+                item[1].step,
+                0 if item[1].kind == "quick" else 1,
+                item[1].task_id,
+            ),
+        )
+
+    def _next_pending_task_locked(self) -> tuple[Path, ValidationTask] | None:
+        for path, task in self._pending_tasks_locked():
+            if Path(task.checkpoint_path).exists():
+                return path, task
+            path.unlink(missing_ok=True)
+        return None
 
 
     @contextmanager

@@ -1,0 +1,74 @@
+[
+  {
+    "id": "primary",
+    "label": "完整三重滤网",
+    "settings": {},
+    "variant": "full"
+  },
+  {
+    "id": "fast10",
+    "label": "fast10",
+    "settings": {
+      "macd_fast": 10
+    },
+    "variant": "full"
+  },
+  {
+    "id": "fast14",
+    "label": "fast14",
+    "settings": {
+      "macd_fast": 14
+    },
+    "variant": "full"
+  },
+  {
+    "id": "slow24",
+    "label": "slow24",
+    "settings": {
+      "macd_slow": 24
+    },
+    "variant": "full"
+  },
+  {
+    "id": "slow28",
+    "label": "slow28",
+    "settings": {
+      "macd_slow": 28
+    },
+    "variant": "full"
+  },
+  {
+    "id": "force1",
+    "label": "force1",
+    "settings": {
+      "force_span": 1
+    },
+    "variant": "full"
+  },
+  {
+    "id": "force3",
+    "label": "force3",
+    "settings": {
+      "force_span": 3
+    },
+    "variant": "full"
+  },
+  {
+    "id": "drop_weekly",
+    "label": "drop_weekly",
+    "settings": {},
+    "variant": "drop_weekly"
+  },
+  {
+    "id": "drop_pullback",
+    "label": "drop_pullback",
+    "settings": {},
+    "variant": "drop_pullback"
+  },
+  {
+    "id": "drop_trigger",
+    "label": "drop_trigger",
+    "settings": {},
+    "variant": "drop_trigger"
+  }
+]

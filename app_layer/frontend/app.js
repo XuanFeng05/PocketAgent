@@ -10,104 +10,68 @@ const VISUAL_DEFAULT_FREQS = [...FREQUENCY_ORDER];
 const VISUAL_DEFAULT_ADJUSTS = ['pre', 'none', 'post'];
 
 const state = {
-  inventory: [],
-  activeJobId: null,
-  downloadJobActive: false,
-  pollTimer: null,
-  materializeJobId: null,
-  materializePollTimer: null,
-  bundleJobId: null,
-  bundlePollTimer: null,
-  featureJobId: null,
-  featurePollTimer: null,
-  agentCacheJobId: null,
-  agentCachePollTimer: null,
-  agentJobId: null,
-  agentPollTimer: null,
-  agentSpec: null,
-  agentRunId: null,
-  agentRuns: [],
-  agentRunMetrics: [],
-  agentRunLogs: [],
-  agentMetricSeq: 0,
-  agentLogSeq: 0,
-  agentLoadedRunId: null,
-  agentPollBusy: false,
-  agentPollGeneration: 0,
-  agentPollFailures: 0,
-  agentActiveTab: 'setup',
-  agentChartHidden: {},
-  agentChartHover: {},
-  agentChartGroupsCollapsed: {},
-  agentSelectedManageRun: null,
-  evaluationModels: [],
-  evaluationRuns: [],
-  evaluationRunId: null,
-  evaluationReplay: {
-    activeTab: 'market',
-    runId: null,
-    payload: null,
-    hoverIndex: null,
-    pollTimer: null,
-    appliedRunId: null,
-    appliedEventCount: 0,
-  },
-  featureSpec: null,
-  featureIndicatorConfig: null,
-  modelInputBlueprint: null,
-  modelInputDefault: null,
-  modelInputCatalog: [],
-  modelInputCompiled: null,
-  modelInputValidation: null,
-  modelInputDirty: false,
-  modelInputDragIndex: null,
-  modelInputInsertIndex: null,
-  inventoryViewMode: 'group',
-  expandedInventorySymbols: new Set(),
-  selectedInventoryKeys: new Set(),
-  configSymbolPath: DEFAULT_DOWNLOAD_SYMBOLS_FILE,
-  visualization: {
-    payload: null,
-    selectedFreq: 'daily',
-    loading: false,
-    windowOffset: 0,
-    totalRows: 0,
-    prefetching: null,
-    beforeLoadSize: VISUAL_WINDOW_BARS,
-    afterLoadSize: VISUAL_WINDOW_BARS,
-    beforeTriggerAbsolute: null,
-    afterTriggerAbsolute: null,
-    pendingZoom: null,
-    mainOverlays: new Set(),
-    mainOverlayPreferenceExplicit: false,
-    panelSelections: ['volume', 'macd', 'kd'],
-    panelSelectionsByFreq: {},
-    displayInitialized: false,
-    inspectorVisible: true,
-    loadGeneration: 0,
-    abortController: null,
-    viewStart: 0,
-    viewEnd: 0,
-    hoverIndex: null,
-    hoverPanel: null,
-    referenceGuides: {
+inventory: [],
+activeJobId: null,
+downloadJobActive: false,
+pollTimer: null,
+materializeJobId: null,
+materializePollTimer: null,
+bundleJobId: null,
+bundlePollTimer: null,
+featureJobId: null,
+featurePollTimer: null,
+featureSpec: null,
+featureIndicatorConfig: null,
+modelInputBlueprint: null,
+modelInputDefault: null,
+modelInputCatalog: [],
+modelInputCompiled: null,
+modelInputValidation: null,
+modelInputDirty: false,
+modelInputDragIndex: null,
+modelInputInsertIndex: null,
+inventoryViewMode: 'group',
+expandedInventorySymbols: new Set(),
+selectedInventoryKeys: new Set(),
+configSymbolPath: DEFAULT_DOWNLOAD_SYMBOLS_FILE,
+visualization: {
+payload: null,
+selectedFreq: 'daily',
+loading: false,
+windowOffset: 0,
+totalRows: 0,
+prefetching: null,
+beforeLoadSize: VISUAL_WINDOW_BARS,
+afterLoadSize: VISUAL_WINDOW_BARS,
+beforeTriggerAbsolute: null,
+afterTriggerAbsolute: null,
+pendingZoom: null,
+mainOverlays: new Set(),
+mainOverlayPreferenceExplicit: false,
+panelSelections: ['volume', 'macd', 'kd'],
+panelSelectionsByFreq: {},
+displayInitialized: false,
+inspectorVisible: true,
+loadGeneration: 0,
+abortController: null,
+viewStart: 0,
+viewEnd: 0,
+hoverIndex: null,
+hoverPanel: null,
+referenceGuides: {
       active: false,
       panel: null,
       price: null,
       volume: null,
     },
-    modeSnapshots: {
-      market: null,
-      evaluation: null,
-    },
-    drag: {
+drag: {
       active: false,
       startX: 0,
       startViewStart: 0,
       startViewEnd: 0,
-    },
-  },
-  detail: {
+    }
+},
+detail: {
     symbol: null,
     slices: [],
     selectedFreq: null,
@@ -117,13 +81,13 @@ const state = {
     rows: [],
     hasMore: false,
     loading: false,
-  },
+  }
 };
 
 let visualReferenceClickTimer = null;
 let modelInputValidationTimer = null;
 let modelInputValidationGeneration = 0;
-let agentExportConflictResolver = null;
+
 
 const LANGUAGE_STORAGE_KEY = 'pocketagent.language';
 const I18N_EN_TO_ZH = {
@@ -1855,11 +1819,7 @@ function drawVisualizationPayload(payload) {
       if (legend) legend.innerHTML = '-';
     }
   }
-  if (payload?.mode === 'evaluation' && state.evaluationReplay.activeTab === 'evaluation') {
-    renderEvaluationStats(evaluationEventForVisualizationIndex());
-  } else {
-    renderTechnicalInspector(payload);
-  }
+  renderTechnicalInspector(payload);
 }
 
 function updateVisualizationPanelVisibility() {
@@ -2067,124 +2027,15 @@ function mainOverlayLegendItems(payload, index) {
 }
 
 
-function evaluationEventForVisualizationIndex(index = null) {
-  const payload = state.visualization.payload;
-  if (payload?.mode !== 'evaluation') return null;
-  const bars = payload.bars || [];
-  if (!bars.length) return null;
-  let selectedIndex = index;
-  if (selectedIndex === null || selectedIndex === undefined) {
-    selectedIndex = state.visualization.hoverIndex;
-  }
-  if (selectedIndex === null || selectedIndex === undefined || !bars[selectedIndex]) {
-    selectedIndex = Math.max(0, Math.min(bars.length - 1, (state.visualization.viewEnd || bars.length) - 1));
-  }
-  return bars[selectedIndex]?._evaluationEvent || null;
-}
 
-function evaluationFillInfo(event) {
-  const fills = event?.execution?.fills || [];
-  const filled = fills.find(item => item.status === 'filled') || null;
-  const blocked = fills.find(item => item.status === 'blocked') || null;
-  const action = String(event?.decision?.action || 'hold').toLowerCase();
-  const syntheticBlocked = !filled && !blocked && action !== 'hold'
-    ? { status: 'blocked', side: action, reason: 'No fill was created for this action.' }
-    : null;
-  const primary = filled || blocked || syntheticBlocked || null;
-  return {
-    filled,
-    blocked: blocked || syntheticBlocked,
-    primary,
-    executed: Boolean(filled || event?.execution?.executed),
-    rejected: Boolean(blocked || syntheticBlocked || event?.execution?.blocked),
-  };
-}
 
-function evaluationActionLabel(event) {
-  const execution = event?.execution || {};
-  const raw = String(event?.decision?.raw_action || event?.decision?.action || 'hold').toLowerCase();
-  if (execution.executed) return `Executed ${String(execution.side || raw).toUpperCase()}`;
-  if (execution.blocked) return `Blocked ${String(execution.side || raw).toUpperCase()}`;
-  return raw.toUpperCase();
-}
 
-function evaluationLegendItems(event) {
-  if (!event) return [];
-  const execution = event.execution || {};
-  const color = execution.executed
-    ? (String(execution.side).toLowerCase() === 'sell' ? '#fbbf24' : '#60a5fa')
-    : execution.blocked ? '#f97316' : '#94a3b8';
-  const items = [
-    legendItem('Decision', evaluationActionLabel(event), color),
-  ];
-  if (execution.blocked_reason) items.push(legendItem('Reason', execution.blocked_reason, '#f97316'));
-  if (execution.executed) {
-    items.push(legendItem('Trade', `${formatNumber(execution.shares, 0)} @ ${formatNumber(execution.price, 3)}`, color));
-  }
-  return items;
-}
 
-function drawEvaluationActionOverlays(ctx, visibleBars, renderBars, pad, plotW, yFor) {
-  const payload = state.visualization.payload;
-  if (payload?.mode !== 'evaluation' || !visibleBars.length || !renderBars.length) return;
-  const step = plotW / Math.max(1, renderBars.length);
-  renderBars.forEach((bar, index) => {
-    const start = Number.isInteger(bar._sourceStart) ? bar._sourceStart : index;
-    const end = Number.isInteger(bar._sourceEnd) ? bar._sourceEnd : start;
-    const events = visibleBars.slice(start, end + 1).map(item => item._evaluationEvent).filter(Boolean);
-    if (!events.length) return;
-    let marker = null;
-    for (const event of events) {
-      const info = evaluationFillInfo(event);
-      if (info.filled) marker = { event, fill: info.filled, type: info.filled.side === 'sell' ? 'sell' : 'buy', blocked: false };
-      else if (info.blocked && !marker) marker = { event, fill: info.blocked, type: info.blocked.side === 'sell' ? 'blocked_sell' : 'blocked_buy', blocked: true };
-    }
-    if (!marker) return;
-    const x = pad.left + step * index + step / 2;
-    const price = Number(marker.fill.price ?? marker.fill.execution_price ?? marker.fill.reference_price ?? bar.close ?? bar.open);
-    const y = yFor(Number.isFinite(price) ? price : Number(bar.close || bar.open));
-    ctx.save();
-    ctx.lineWidth = 2;
-    if (marker.blocked) {
-      const isBlockedSell = marker.type === 'blocked_sell';
-      ctx.strokeStyle = isBlockedSell ? '#a78bfa' : '#f97316';
-      ctx.fillStyle = isBlockedSell ? 'rgba(167, 139, 250, 0.22)' : 'rgba(249, 115, 22, 0.22)';
-      ctx.beginPath();
-      if (isBlockedSell) {
-        ctx.moveTo(x, y + 11);
-        ctx.lineTo(x + 8, y - 3);
-        ctx.lineTo(x - 8, y - 3);
-      } else {
-        ctx.moveTo(x, y - 11);
-        ctx.lineTo(x - 8, y + 3);
-        ctx.lineTo(x + 8, y + 3);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(x - 4, y - 4);
-      ctx.lineTo(x + 4, y + 4);
-      ctx.moveTo(x + 4, y - 4);
-      ctx.lineTo(x - 4, y + 4);
-      ctx.stroke();
-    } else {
-      const isBuy = marker.type === 'buy';
-      ctx.fillStyle = isBuy ? '#60a5fa' : '#fbbf24';
-      ctx.strokeStyle = '#0f172a';
-      ctx.beginPath();
-      if (isBuy) {
-        ctx.moveTo(x, y - 10); ctx.lineTo(x - 7, y + 5); ctx.lineTo(x + 7, y + 5);
-      } else {
-        ctx.moveTo(x, y + 10); ctx.lineTo(x - 7, y - 5); ctx.lineTo(x + 7, y - 5);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    }
-    ctx.restore();
-  });
-}
+
+
+
+
+
 
 function drawPriceCanvas(canvas, bars, payload) {
   if (!canvas) return;
@@ -2242,7 +2093,7 @@ function drawPriceCanvas(canvas, bars, payload) {
   });
 
   drawMainPriceOverlays(ctx, payload, pad, plotW, yFor);
-  drawEvaluationActionOverlays(ctx, bars, renderBars, pad, plotW, yFor);
+  
 
   drawTimeLabels(ctx, bars, pad, width, height, plotW);
   const visibleHoverIndex = getVisibleHoverIndex(bars);
@@ -2281,9 +2132,7 @@ function priceLegendHtml(payload, hoverBar = null, hoverIndex = null) {
     parts.push(legendItem('Turn', formatNumber(hoverBar.turn, 4), '#f8fafc', 'white'));
     if (hoverBar.is_st === true) parts.push(legendItem('Status', 'ST', '#ff335f'));
   }
-  if (payload?.mode === 'evaluation') {
-    parts.push(...evaluationLegendItems(hoverBar._evaluationEvent));
-  }
+  
   parts.push(...mainOverlayLegendItems(payload, hoverIndex));
   return `<span class="legend-line">${base}${parts.join('')}</span>`;
 }
@@ -3934,1808 +3783,201 @@ async function previewFeatureDataset() {
   }
 }
 
-async function loadAgentSpec() {
-  try {
-    const res = await apiGet('/api/agent/spec');
-    state.agentSpec = res.data || {};
-    applyAgentProfile('smoke');
-    if ($('agentDevice')) {
-      const cudaOption = $('agentDevice').querySelector('option[value="cuda"]');
-      if (cudaOption) cudaOption.disabled = !state.agentSpec.cuda_available;
-      if (!state.agentSpec.cuda_available) $('agentDevice').value = 'cpu';
-    }
-    renderAgentContract();
-    await loadAgentRuns();
-  } catch (err) {
-    $('agentContractTableBody').innerHTML = `<tr><td colspan="3" class="error-cell">Agent spec failed: ${escapeHtml(err.message)}</td></tr>`;
-  }
-}
-
-function agentNumber(id) {
-  return Number($(id)?.value || 0);
-}
-
-function setAgentValue(id, value) {
-  const element = $(id);
-  if (!element || value === undefined || value === null) return;
-  if (element.type === 'checkbox') element.checked = Boolean(value);
-  else element.value = String(value);
-}
-
-function setAgentFrequencies(frequencies) {
-  const selected = new Set((frequencies || []).map(String));
-  const useDefaults = selected.size === 0;
-  document.querySelectorAll('.agentFrequency').forEach(input => {
-    input.checked = useDefaults
-      ? input.value !== 'monthly'
-      : selected.has(input.value);
-  });
-}
-
-function getAgentFrequencies() {
-  return Array.from(document.querySelectorAll('.agentFrequency:checked')).map(input => input.value);
-}
-
-function applyAgentProfile(profile) {
-  const config = state.agentSpec?.profiles?.[profile];
-  if (!config) return;
-  setAgentValue('agentProfile', profile);
-  setAgentValue('agentRunName', '');
-  setAgentValue('agentStorePath', config.store_path);
-  setAgentValue('agentSymbolsFile', config.symbols_file || '');
-  setAgentValue('agentSymbolLimit', config.symbol_limit);
-  setAgentValue('agentSymbolSeed', config.symbol_seed);
-  setAgentValue('agentFold', config.fold);
-  setAgentValue('agentDevice', config.device);
-  setAgentValue('agentParallelEnvs', config.parallel_envs);
-  setAgentValue('agentUseCache', config.use_agent_cache);
-  setAgentFrequencies(config.frequencies || state.agentSpec?.defaults?.frequencies || []);
-  setAgentValue('agentTotalSteps', config.total_steps);
-  setAgentValue('agentEpisodeDays', config.episode_days);
-  setAgentValue('agentValidationDays', config.validation_days);
-  setAgentValue('agentSeed', config.seed);
-  setAgentValue('agentOutputDir', config.output_dir);
-  const ppo = config.ppo || {};
-  const model = config.model || {};
-  const execution = config.execution || {};
-  const reward = config.reward || {};
-  const checkpoint = config.checkpoint || {};
-  const validation = config.validation || {};
-  const values = {
-    agentLearningRate: ppo.learning_rate, agentFinalLearningRate: ppo.final_learning_rate,
-    agentGamma: ppo.gamma, agentGaeLambda: ppo.gae_lambda,
-    agentRolloutSteps: ppo.rollout_steps, agentMinibatchSize: ppo.minibatch_size,
-    agentUpdateEpochs: ppo.update_epochs, agentClipRatio: ppo.clip_ratio,
-    agentValueClip: ppo.value_clip, agentValueCoefficient: ppo.value_coefficient,
-    agentEntropyCoefficient: ppo.entropy_coefficient,
-    agentMaxGradientNorm: ppo.maximum_gradient_norm, agentTargetKl: ppo.target_kl,
-    agentInputProjection: model.input_projection_size, agentLstmHidden: model.lstm_hidden_size,
-    agentLstmLayers: model.lstm_layers, agentFusedMarket: model.fused_market_size,
-    agentContextEmbedding: model.context_embedding_size,
-    agentRuntimeEmbedding: model.runtime_embedding_size,
-    agentLocalState: model.local_state_size, agentGlobalState: model.global_state_size,
-    agentInitialCash: execution.initial_cash, agentLotSize: execution.lot_size,
-    agentMaxPosition: execution.max_position_ratio,
-    agentBarParticipation: execution.bar_participation_rate,
-    agentAuctionParticipation: execution.auction_participation_rate,
-    agentCommission: execution.commission_rate,
-    agentMinimumCommission: execution.minimum_commission,
-    agentStampDuty: execution.stamp_duty_rate,
-    agentTransferFee: execution.transfer_fee_rate,
-    agentBaseSlippage: execution.base_slippage_rate,
-    agentImpactCoefficient: execution.impact_coefficient,
-    agentMaximumSlippage: execution.maximum_slippage_rate,
-    agentHoldingBarCap: execution.holding_bar_cap,
-    agentRewardScale: reward.scale, agentHurdleRate: reward.hurdle_rate_annual,
-    agentDrawdownPenalty: reward.drawdown_penalty,
-    agentTurnoverPenalty: reward.turnover_penalty,
-    agentInvalidPenalty: reward.invalid_action_penalty,
-    agentCheckpointInterval: checkpoint.checkpoint_interval_updates,
-    agentValidationInterval: checkpoint.validation_interval_updates,
-    agentKeepLast: checkpoint.keep_last, agentBestMetric: checkpoint.best_metric,
-    agentValidationSymbolLimit: validation.symbol_limit,
-    agentValidationSymbolSeed: validation.symbol_seed,
-    agentQuickValidationDays: validation.quick_days,
-    agentPeriodicValidationDevice: validation.periodic_device,
-    agentFinalValidationDevice: validation.final_device,
-  };
-  Object.entries(values).forEach(([id, value]) => setAgentValue(id, value));
-}
-
-function renderAgentContract() {
-  const spec = state.agentSpec || {};
-  const model = spec.model || {};
-  const ppo = spec.ppo || {};
-  const execution = spec.execution || {};
-  const selectedFrequencies = getAgentFrequencies();
-  renderSummaryCards('agentContractSummary', [
-    { label: 'Algorithm', value: spec.algorithm || '-' },
-    { label: 'Encoder', value: `${selectedFrequencies.length || 'All'} independent LSTMs` },
-    { label: 'Action', value: 'SELL / HOLD / BUY + size' },
-    { label: 'Parallel Envs', value: $('agentParallelEnvs')?.value || '1' },
-    { label: 'Device', value: `${spec.cuda_available ? 'CUDA ready' : 'CPU'} / Torch ${spec.torch_version || '-'}` },
-    { label: 'Gamma / GAE', value: `${ppo.gamma ?? '-'} / ${ppo.gae_lambda ?? '-'}` },
-    { label: 'Reward', value: `Net NAV log return - hurdle ${formatPercent(agentNumber('agentHurdleRate') || 0)}` },
-  ]);
-  const rows = [
-    ['Model', 'Frequencies', selectedFrequencies.join(', ') || 'Feature Dataset all'],
-    ['Model', 'LSTM', `${model.lstm_layers ?? '-'} layers x ${model.lstm_hidden_size ?? '-'} hidden`],
-    ['Model', 'Pooling', 'Masked attention; one stock per episode'],
-    ['PPO', 'Clip / Target KL', `${ppo.clip_ratio ?? '-'} / ${ppo.target_kl ?? '-'}`],
-    ['PPO', 'Rollout / Minibatch', `${ppo.rollout_steps ?? '-'} / ${ppo.minibatch_size ?? '-'}`],
-    ['Execution', 'Position / Participation', `${formatPercent(execution.max_position_ratio)} / ${formatPercent(execution.bar_participation_rate)}`],
-    ['Execution', 'Commission', `${formatPercent(execution.commission_rate)} / min CNY ${execution.minimum_commission ?? '-'}`],
-    ['Execution', 'Sell Stamp Duty', formatPercent(execution.stamp_duty_rate)],
-    ['Execution', 'Slippage', `${formatPercent(execution.base_slippage_rate)} base / ${formatPercent(execution.maximum_slippage_rate)} cap`],
-    ['Validation', 'Protocol', '3 anchored folds / 20-day embargo / 252-day frozen test'],
-  ];
-  $('agentContractTableBody').innerHTML = rows.map(row => `<tr>${row.map(value => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`).join('');
-}
-
-function getAgentPayload() {
-  return {
-    profile: $('agentProfile').value,
-    run_name: $('agentRunName').value.trim(),
-    store_path: $('agentStorePath').value.trim(),
-    symbols_file: $('agentSymbolsFile').value.trim() || null,
-    symbol_limit: agentNumber('agentSymbolLimit'),
-    symbol_seed: agentNumber('agentSymbolSeed'),
-    fold: Number($('agentFold').value || 3),
-    device: $('agentDevice').value,
-    parallel_envs: agentNumber('agentParallelEnvs'),
-    use_agent_cache: Boolean($('agentUseCache')?.checked),
-    frequencies: getAgentFrequencies(),
-    total_steps: agentNumber('agentTotalSteps'), episode_days: agentNumber('agentEpisodeDays'),
-    validation_days: agentNumber('agentValidationDays'), seed: agentNumber('agentSeed'),
-    output_dir: $('agentOutputDir').value.trim(),
-    ppo: {
-      learning_rate: agentNumber('agentLearningRate'), final_learning_rate: agentNumber('agentFinalLearningRate'),
-      gamma: agentNumber('agentGamma'), gae_lambda: agentNumber('agentGaeLambda'),
-      rollout_steps: agentNumber('agentRolloutSteps'), minibatch_size: agentNumber('agentMinibatchSize'),
-      update_epochs: agentNumber('agentUpdateEpochs'), clip_ratio: agentNumber('agentClipRatio'),
-      value_clip: agentNumber('agentValueClip'), value_coefficient: agentNumber('agentValueCoefficient'),
-      entropy_coefficient: agentNumber('agentEntropyCoefficient'),
-      maximum_gradient_norm: agentNumber('agentMaxGradientNorm'), target_kl: agentNumber('agentTargetKl'),
-    },
-    model: {
-      input_projection_size: agentNumber('agentInputProjection'), lstm_hidden_size: agentNumber('agentLstmHidden'),
-      lstm_layers: agentNumber('agentLstmLayers'), fused_market_size: agentNumber('agentFusedMarket'),
-      context_embedding_size: agentNumber('agentContextEmbedding'), runtime_embedding_size: agentNumber('agentRuntimeEmbedding'),
-      local_state_size: agentNumber('agentLocalState'), global_state_size: agentNumber('agentGlobalState'), dropout: 0,
-    },
-    execution: {
-      initial_cash: agentNumber('agentInitialCash'), lot_size: agentNumber('agentLotSize'),
-      max_position_ratio: agentNumber('agentMaxPosition'), bar_participation_rate: agentNumber('agentBarParticipation'),
-      auction_participation_rate: agentNumber('agentAuctionParticipation'), commission_rate: agentNumber('agentCommission'),
-      minimum_commission: agentNumber('agentMinimumCommission'), stamp_duty_rate: agentNumber('agentStampDuty'),
-      transfer_fee_rate: agentNumber('agentTransferFee'), base_slippage_rate: agentNumber('agentBaseSlippage'),
-      impact_coefficient: agentNumber('agentImpactCoefficient'), maximum_slippage_rate: agentNumber('agentMaximumSlippage'),
-      holding_bar_cap: agentNumber('agentHoldingBarCap'),
-    },
-    reward: {
-      kind: 'net_asset_log_return', scale: agentNumber('agentRewardScale'),
-      hurdle_rate_annual: agentNumber('agentHurdleRate'),
-      drawdown_penalty: agentNumber('agentDrawdownPenalty'), turnover_penalty: agentNumber('agentTurnoverPenalty'),
-      invalid_action_penalty: agentNumber('agentInvalidPenalty'),
-    },
-    checkpoint: {
-      checkpoint_interval_updates: agentNumber('agentCheckpointInterval'),
-      validation_interval_updates: agentNumber('agentValidationInterval'),
-      keep_last: agentNumber('agentKeepLast'), best_metric: $('agentBestMetric').value,
-    },
-    validation: {
-      symbol_limit: agentNumber('agentValidationSymbolLimit'),
-      symbol_seed: agentNumber('agentValidationSymbolSeed'),
-      quick_days: agentNumber('agentQuickValidationDays'),
-      periodic_device: $('agentPeriodicValidationDevice').value,
-      final_device: $('agentFinalValidationDevice').value,
-    },
-  };
-}
-
-function renderAgentPreflight(data) {
-  const split = data?.splits;
-  const selected = split?.folds?.find(item => Number(item.fold) === Number(data.selected_fold));
-  renderSummaryCards('agentPreflightSummary', [
-    { label: 'Status', value: data?.status || '-' },
-    { label: 'Symbols', value: data?.symbols ?? data?.store?.summary?.symbols ?? 0 },
-    { label: 'Validation Symbols', value: data?.validation_symbols ?? '-' },
-    { label: 'Schema', value: String(data?.schema_hash || data?.store?.summary?.schema_hash || '-').slice(0, 12) },
-    { label: 'Config', value: String(data?.config_hash || '-').slice(0, 12) },
-    { label: 'Frequencies', value: (data?.frequencies || []).join(', ') || '-' },
-    { label: 'Train', value: selected ? `${selected.train.start} -> ${selected.train.end}` : '-' },
-    { label: 'Validation', value: selected ? `${selected.validation.start} -> ${selected.validation.end}` : '-' },
-    { label: 'Frozen Test', value: split?.test ? `${split.test.start} -> ${split.test.end}` : '-' },
-    { label: 'Device', value: data?.device || '-' },
-  ]);
-  $('agentPreflightTableBody').innerHTML = (data?.checks || []).map(item => `
-    <tr><td>${escapeHtml(item.name)}</td><td><span class="status-pill ${item.status === 'pass' ? 'ok' : item.status === 'warn' ? 'warn' : 'bad'}">${escapeHtml(item.status)}</span></td><td>${escapeHtml(item.message)}</td></tr>
-  `).join('') || '<tr><td colspan="3" class="muted">No checks.</td></tr>';
-}
-
-
-function getAgentCachePayload() {
-  return {
-    feature_dir: $('agentCacheFeatureDir').value.trim(),
-    output_dir: $('agentCacheOutputDir').value.trim(),
-    symbols_file: $('agentCacheSymbolsFile').value.trim() || null,
-    workers: Number($('agentCacheWorkers').value || 1),
-    max_decisions_per_symbol: Number($('agentCacheMaxDecisions').value || 0),
-    reset: Boolean($('agentCacheReset')?.checked),
-    frequencies: getAgentFrequencies(),
-  };
-}
-
-function renderAgentCacheInspect(data = {}) {
-  const manifest = data.manifest || data.inspect?.manifest || {};
-  const samples = data.samples || data.inspect?.samples || [];
-  const output = data.output_dir || manifest.output_dir || $('agentCacheOutputDir')?.value || '-';
-  renderSummaryCards('agentCacheSummary', [
-    { label: 'Output', value: output || '-' },
-    { label: 'Symbols', value: manifest.symbol_count ?? manifest.symbols?.length ?? data.symbols ?? '-' },
-    { label: 'Decisions', value: manifest.decision_count ?? data.decision_count ?? '-' },
-    { label: 'Episode Rows', value: data.episode_index_rows ?? data.inspect?.episode_index_rows ?? '-' },
-    { label: 'Frequencies', value: (manifest.frequencies || data.frequencies || []).join(', ') || '-' },
-    { label: 'Schema', value: String(manifest.schema_hash || data.schema_hash || '-').slice(0, 12) },
-    { label: 'Storage', value: manifest.storage || data.storage || '-' },
-  ]);
-  $('agentCacheTableBody').innerHTML = samples.map(item => {
-    const shapes = Object.entries(item.arrays || {}).slice(0, 8).map(([name, shape]) => `${name}:${(shape || []).join('x')}`).join(' / ');
-    return `<tr><td>${escapeHtml(item.symbol || '-')}</td><td>${escapeHtml(item.decision_count ?? '-')}</td><td>${escapeHtml(`${String(item.first_decision_time || '-').slice(0,10)} -> ${String(item.last_decision_time || '-').slice(0,10)}`)}</td><td>${escapeHtml(shapes || '-')}</td></tr>`;
-  }).join('') || '<tr><td colspan="4" class="muted">No cache sample rows.</td></tr>';
-}
-
-function renderAgentCacheJob(job = {}) {
-  const progress = Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100)));
-  const active = ['queued', 'running'].includes(job.status);
-  $('buildAgentCacheBtn').disabled = active;
-  if ($('stopAgentCacheBtn')) $('stopAgentCacheBtn').disabled = !active;
-  $('agentCacheStatus').textContent = `Agent Cache Status: ${job.status || '-'} / ${job.message || ''}`;
-  $('agentCacheStatus').className = `job-status ${job.status || ''}`;
-  $('agentCacheProgressBar').style.width = `${progress}%`;
-  if (job.result) renderAgentCacheInspect(job.result);
-}
-
-function startPollingAgentCacheJob(jobId) {
-  state.agentCacheJobId = jobId;
-  if (state.agentCachePollTimer) clearInterval(state.agentCachePollTimer);
-  async function poll() {
-    try {
-      const res = await apiGet(`/api/jobs/${jobId}`);
-      renderAgentCacheJob(res.job);
-      if (['completed', 'failed', 'cancelled'].includes(res.job.status)) {
-        clearInterval(state.agentCachePollTimer);
-        state.agentCachePollTimer = null;
-        state.agentCacheJobId = null;
-        $('buildAgentCacheBtn').disabled = false;
-        if ($('stopAgentCacheBtn')) $('stopAgentCacheBtn').disabled = true;
-      }
-    } catch (err) {
-      $('agentCacheStatus').textContent = `Agent Cache Status: polling failed / ${err.message}`;
-      $('agentCacheStatus').className = 'job-status failed';
-      clearInterval(state.agentCachePollTimer);
-      state.agentCachePollTimer = null;
-      $('buildAgentCacheBtn').disabled = false;
-      if ($('stopAgentCacheBtn')) $('stopAgentCacheBtn').disabled = true;
-    }
-  }
-  poll();
-  state.agentCachePollTimer = setInterval(poll, 1000);
-}
-
-async function buildAgentCache() {
-  if (state.agentCacheJobId) return alert('An Agent cache build is already active.');
-  try {
-    $('buildAgentCacheBtn').disabled = true;
-    $('agentCacheStatus').textContent = 'Agent Cache Status: queued / building index-based cache';
-    $('agentCacheStatus').className = 'job-status running';
-    $('agentCacheProgressBar').style.width = '0%';
-    const res = await apiPost('/api/agent/cache/build', getAgentCachePayload());
-    startPollingAgentCacheJob(res.data.job_id);
-  } catch (err) {
-    $('buildAgentCacheBtn').disabled = false;
-    if ($('stopAgentCacheBtn')) $('stopAgentCacheBtn').disabled = true;
-    $('agentCacheStatus').textContent = `Agent Cache Status: failed / ${err.message}`;
-    $('agentCacheStatus').className = 'job-status failed';
-    alert(`Build Agent cache failed: ${err.message}`);
-  }
-}
-
-async function stopAgentCacheBuild() {
-  const jobId = state.agentCacheJobId;
-  if (!jobId) return;
-  try {
-    if ($('stopAgentCacheBtn')) $('stopAgentCacheBtn').disabled = true;
-    $('agentCacheStatus').textContent = 'Agent Cache Status: cancelling / stop requested';
-    $('agentCacheStatus').className = 'job-status running';
-    await apiPost(`/api/jobs/${jobId}/cancel`, {});
-  } catch (err) {
-    $('agentCacheStatus').textContent = `Agent Cache Status: cancel failed / ${err.message}`;
-    $('agentCacheStatus').className = 'job-status failed';
-    if ($('stopAgentCacheBtn')) $('stopAgentCacheBtn').disabled = false;
-  }
-}
-
-async function inspectAgentCache() {
-  try {
-    $('agentCacheStatus').textContent = 'Agent Cache Status: inspecting cache';
-    $('agentCacheStatus').className = 'job-status running';
-    const res = await apiPost('/api/agent/cache/inspect', { cache_dir: $('agentCacheOutputDir').value.trim() });
-    renderAgentCacheInspect(res.data);
-    $('agentCacheStatus').textContent = 'Agent Cache Status: inspected';
-    $('agentCacheStatus').className = 'job-status completed';
-  } catch (err) {
-    $('agentCacheStatus').textContent = `Agent Cache Status: failed / ${err.message}`;
-    $('agentCacheStatus').className = 'job-status failed';
-  }
-}
-
-function useAgentCachePathForTraining() {
-  const value = $('agentCacheOutputDir').value.trim();
-  if (!value) return;
-  $('agentStorePath').value = value;
-  $('agentPreflightStatus').textContent = `Preflight Status: idle / using Agent cache ${value}`;
-}
-
-async function preflightAgent() {
-  const button = $('agentPreflightBtn');
-  button.disabled = true;
-  $('agentPreflightStatus').textContent = 'Preflight Status: validating Store and time splits...';
-  $('agentPreflightStatus').className = 'job-status running';
-  try {
-    const res = await apiPost('/api/agent/runs/preflight', getAgentPayload());
-    renderAgentPreflight(res.data);
-    $('agentPreflightStatus').textContent = `Preflight Status: ${res.data.status || '-'}`;
-    $('agentPreflightStatus').className = `job-status ${res.data.ok ? 'completed' : 'failed'}`;
-  } catch (err) {
-    $('agentPreflightStatus').textContent = `Preflight Status: failed / ${err.message}`;
-    $('agentPreflightStatus').className = 'job-status failed';
-  } finally {
-    button.disabled = false;
-  }
-}
-
-function setAgentConfigLocked(locked) {
-  document.querySelectorAll('.agent-config-input').forEach(input => { input.disabled = locked; });
-  $('agentPreflightBtn').disabled = locked;
-  $('startAgentTrainingBtn').disabled = locked;
-}
-
-function showAgentTab(name) {
-  state.agentActiveTab = name;
-  document.querySelectorAll('.agent-tab').forEach(button => button.classList.toggle('active', button.dataset.agentTab === name));
-  document.querySelectorAll('.agent-tab-panel').forEach(panel => panel.classList.remove('active'));
-  $(`agentTab${name[0].toUpperCase()}${name.slice(1)}`)?.classList.add('active');
-  if (name === 'runs') loadAgentRuns();
-  if (name === 'monitor') drawAllAgentCharts();
-}
-
-const AGENT_STATUS_LABELS = {
-  idle: 'Idle', queued: 'Queued', running: 'Running', paused: 'Paused', stopped: 'Stopped',
-  completed: 'Completed', failed: 'Failed', interrupted: 'Interrupted', starting: 'Starting', pending: 'Pending',
-};
-
-const AGENT_PHASE_LABELS = {
-  queued: 'Task created', launching: 'Launching training process', preflight: 'Validating training config',
-  loading_feature_parts: 'Loading Feature Parts', preparing_data: 'Preparing data cache',
-  building_splits: 'Building train/validation splits', building_model: 'Building model and optimizer',
-  starting_rollout: 'Starting rollout', collecting: 'Collecting samples', optimizing: 'Optimizing policy', updated: 'Policy update',
-  checkpointing: 'Saving checkpoint', training_completed: 'Training completed', paused: 'Paused',
-  stopped: 'Stopped', failed: 'Failed', interrupted: 'Interrupted', completed: 'Completed',
-};
-
-function agentStatusLabel(value) {
-  return AGENT_STATUS_LABELS[String(value || '').toLowerCase()] || value || '-';
-}
-
-function agentPhaseLabel(value) {
-  return AGENT_PHASE_LABELS[String(value || '').toLowerCase()] || value || '-';
-}
-
-function formatAgentProgressLine(status = {}) {
-  const statusLabel = agentStatusLabel(status.status);
-  const phaseLabel = agentPhaseLabel(status.phase);
-  const steps = status.steps ?? 0;
-  const total = status.total_steps ?? '-';
-  const heartbeatWarning = status.heartbeat_warning ? ' / Heartbeat is stale; worker is still alive' : '';
-  return `Training Status: ${statusLabel} / ${phaseLabel} / ${steps} / ${total}${heartbeatWarning}`;
-}
-
-function formatAgentValidationLine(status = {}) {
-  const stateText = agentStatusLabel(status.status || 'idle');
-  const completed = Number(status.completed || 0);
-  const total = Number(status.total || 0);
-  const progress = total ? ` / ${completed}/${total}` : '';
-  const pending = status.pending_task_id ? ' / Validation task pending' : '';
-  return `Validation Status: ${stateText}${progress}${pending}`;
-}
-
-function mergeAgentRecords(existing, incoming, maxRecords = 12000) {
-  const result = [];
-  const seen = new Set();
-  [...(existing || []), ...(incoming || [])].forEach(item => {
-    const seq = Number(item?.seq || 0);
-    const key = seq ? `seq:${seq}` : `${item?.kind || 'record'}:${item?.time || ''}:${result.length}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    result.push(item);
-  });
-  result.sort((a, b) => Number(a?.seq || 0) - Number(b?.seq || 0));
-  return result.length > maxRecords ? result.slice(-maxRecords) : result;
-}
-
-function renderAgentRun(data, { mergeRecords = false } = {}) {
-  const job = data.status || {};
-  const validationStatus = data.validation_status || {};
-  const progress = Math.max(0, Math.min(100, Math.round(Number(job.progress || 0) * 100)));
-  const active = ['queued', 'running'].includes(job.status);
-  const paused = job.status === 'paused';
-  const locked = active || paused;
-  setAgentConfigLocked(locked);
-  $('pauseAgentRunBtn').disabled = !active;
-  $('resumeAgentRunBtn').disabled = !['paused', 'failed', 'interrupted', 'stopped'].includes(job.status) || !job.latest_checkpoint;
-  $('checkpointAgentRunBtn').disabled = job.status !== 'running';
-  $('stopAgentTrainingBtn').disabled = !active && !paused;
-  $('agentJobStatus').textContent = formatAgentProgressLine(job);
-  $('agentJobStatus').className = `job-status ${job.status || ''}`;
-  $('agentProgressBar').style.width = `${progress}%`;
-  const validationProgress = Math.max(0, Math.min(100, Math.round(Number(validationStatus.progress || 0) * 100)));
-  $('agentValidationStatus').textContent = formatAgentValidationLine(validationStatus);
-  $('agentValidationStatus').className = `job-status ${validationStatus.status || ''} agent-validation-status`;
-  $('agentValidationProgressBar').style.width = `${validationProgress}%`;
-  renderSummaryCards('agentTrainingSummary', [
-    { label: 'Run', value: job.run_name || job.run_id || '-' },
-    { label: 'Progress', value: `${progress}%` },
-    { label: 'Phase', value: agentPhaseLabel(job.phase) },
-    { label: 'Steps', value: `${job.steps ?? 0} / ${job.total_steps ?? '-'}` },
-    { label: 'Updates / Episodes', value: `${job.updates ?? 0} / ${job.episodes ?? 0}` },
-    { label: 'Parallel Envs', value: job.parallel_envs ?? '-' },
-    { label: 'Speed', value: job.steps_per_second ? `${formatNumber(job.steps_per_second, 2)} step/s` : '-' },
-    { label: 'Collect Speed', value: job.collect_steps_per_second ? `${formatNumber(job.collect_steps_per_second, 2)} sample/s` : '-' },
-    { label: 'Collect / Optimize', value: `${formatAgentDuration(job.collect_seconds)} / ${formatAgentDuration(job.optimize_seconds)}` },
-    { label: 'Env Init Time', value: formatAgentDuration(job.initialized_env_seconds) },
-    { label: 'Model / Env Step', value: `${formatNumber(Number(job.model_seconds) * 1000, 2)} / ${formatNumber(Number(job.environment_seconds) * 1000, 2)} ms` },
-    { label: 'Data / Reset Step', value: `${formatNumber(Number(job.data_load_seconds) * 1000, 2)} / ${formatNumber(Number(job.reset_seconds) * 1000, 2)} ms` },
-    { label: 'Samples / Optimizer Steps', value: `${formatNumber(job.samples_per_update, 0)} / ${formatNumber(job.optimizer_steps, 0)}` },
-    { label: 'ETA', value: formatAgentDuration(job.eta_seconds) },
-    { label: 'Elapsed', value: formatAgentDuration(job.elapsed_seconds) },
-    { label: 'Data Cache', value: job.data_cache_total ? `${job.data_cache_completed ?? 0} / ${job.data_cache_total}` : '-' },
-    { label: 'Latest Checkpoint', value: job.latest_checkpoint || '-' },
-    { label: 'Best Checkpoint', value: job.best_checkpoint || '-' },
-  ]);
-  state.agentRunMetrics = mergeRecords
-    ? mergeAgentRecords(state.agentRunMetrics, data.metrics || [])
-    : (data.metrics || []);
-  state.agentRunLogs = mergeRecords
-    ? mergeAgentRecords(state.agentRunLogs, data.logs || [], 600)
-    : (data.logs || []);
-  state.agentMetricSeq = state.agentRunMetrics.length ? Number(state.agentRunMetrics[state.agentRunMetrics.length - 1].seq || 0) : 0;
-  state.agentLogSeq = state.agentRunLogs.length ? Number(state.agentRunLogs[state.agentRunLogs.length - 1].seq || 0) : 0;
-  renderAgentTelemetry(validationStatus);
-  renderAgentCheckpoints(data.checkpoints || []);
-  $('agentJobLogs').textContent = state.agentRunLogs.length
-    ? state.agentRunLogs.map(item => `[${item.time || '-'}] ${String(item.level || 'info').toUpperCase()} ${item.message || ''}`).join('\n')
-    : 'No logs yet.';
-  drawAllAgentCharts();
-}
-
-function formatAgentDuration(seconds) {
-  if (!Number.isFinite(Number(seconds))) return '-';
-  const total = Math.max(0, Math.round(Number(seconds)));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  return hours ? `${hours}h ${minutes}m` : `${minutes}m ${total % 60}s`;
-}
-
-function renderAgentTelemetry(validationStatus = {}) {
-  const trainingRows = state.agentRunMetrics.filter(item => item.kind === 'training');
-  const latestStep = [...trainingRows].reverse().find(item => Number.isFinite(Number(item.nav))) || {};
-  const latestUpdate = [...trainingRows].reverse().find(item => Number.isFinite(Number(item.policy_loss))) || {};
-  const latestPerf = Number.isFinite(Number(latestUpdate.collect_seconds)) ? latestUpdate : latestStep;
-  const validationRecord = [...state.agentRunMetrics].reverse().find(item => item.kind === 'validation') || {};
-  const validation = validationRecord.metrics || {};
-  const validationProgress = [...state.agentRunMetrics].reverse().find(item => item.kind === 'validation_progress') || {};
-  renderSummaryCards('agentTelemetrySummary', [
-    { label: 'Reward', value: formatNumber(latestStep.reward, 6) },
-    { label: 'Asset / Cash', value: `${formatNumber(latestStep.nav, 2)} / ${formatNumber(latestStep.cash, 2)}` },
-    { label: 'Total Loss', value: formatNumber(latestUpdate.loss, 6) },
-    { label: 'Policy / Value Loss', value: `${formatNumber(latestUpdate.policy_loss, 5)} / ${formatNumber(latestUpdate.value_loss, 5)}` },
-    { label: 'KL / Clip', value: `${formatNumber(latestUpdate.approximate_kl, 5)} / ${formatNumber(latestUpdate.clip_fraction, 4)}` },
-    { label: 'Entropy / Gradient', value: `${formatNumber(latestUpdate.entropy, 5)} / ${formatNumber(latestUpdate.gradient_norm, 4)}` },
-    { label: 'Learning Rate', value: formatNumber(latestUpdate.learning_rate, 8) },
-    { label: 'Buy / Hold / Sell', value: `${latestStep.buy_actions ?? '-'} / ${latestStep.hold_actions ?? '-'} / ${latestStep.sell_actions ?? '-'}` },
-    { label: 'Executed / Blocked', value: `${latestStep.executed_orders ?? '-'} / ${latestStep.blocked_orders ?? '-'}` },
-    { label: 'Blocked Reasons', value: Object.entries(latestStep.blocked_reasons || {}).map(([key, value]) => `${key}:${value}`).join(', ') || '-' },
-    { label: 'Turnover / Fees', value: `${formatNumber(latestStep.turnover_value, 2)} / ${formatNumber(latestStep.total_fees, 2)}` },
-    { label: 'Collect Speed', value: latestPerf.collect_steps_per_second ? `${formatNumber(latestPerf.collect_steps_per_second, 2)} sample/s` : '-' },
-    { label: 'Collect / Optimize Time', value: `${formatAgentDuration(latestPerf.collect_seconds)} / ${formatAgentDuration(latestPerf.optimize_seconds)}` },
-    { label: 'Env Init Time', value: formatAgentDuration(latestPerf.initialized_env_seconds) },
-    { label: 'Model / Env Step', value: `${formatNumber(Number(latestPerf.model_seconds) * 1000, 2)} / ${formatNumber(Number(latestPerf.environment_seconds) * 1000, 2)} ms` },
-    { label: 'Data / Reset Step', value: `${formatNumber(Number(latestPerf.data_load_seconds) * 1000, 2)} / ${formatNumber(Number(latestPerf.reset_seconds) * 1000, 2)} ms` },
-    { label: 'Data Chunks / Steps', value: `${latestPerf.data_chunks ?? '-'} / ${latestPerf.data_steps ?? '-'}` },
-    { label: 'Samples / Optimizer Steps', value: `${formatNumber(latestPerf.samples_per_update, 0)} / ${formatNumber(latestPerf.optimizer_steps, 0)}` },
-  ]);
-  renderSummaryCards('agentValidationSummary', [
-    { label: 'State', value: agentStatusLabel(validationStatus.status || validationRecord.validation_kind || '-') },
-    { label: 'Progress', value: validationStatus.total ? `${validationStatus.completed ?? 0} / ${validationStatus.total}` : (validationProgress.total ? `${validationProgress.completed ?? 0} / ${validationProgress.total}` : '-') },
-    { label: 'Sample', value: validationRecord.symbols ? `${validationRecord.symbols} symbols / ${validationRecord.days} days` : '-' },
-    { label: 'Return', value: validation.total_return === undefined ? '-' : formatPercent(validation.total_return) },
-    { label: 'Sharpe', value: formatNumber(validation.sharpe, 3) },
-    { label: 'Max Drawdown', value: validation.maximum_drawdown === undefined ? '-' : formatPercent(validation.maximum_drawdown) },
-    { label: 'Calmar', value: formatNumber(validation.calmar, 3) },
-    { label: 'Observations', value: validation.return_observations ?? '-' },
-  ]);
-}
-
-
-const AGENT_CHART_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#475569'];
-const AGENT_CHART_GROUPS_STORAGE_KEY = 'pocketagent.agent.chartGroups';
-const AGENT_CHART_MAX_POINTS = 1400;
-
-function readAgentChartGroupPrefs() {
-  try {
-    state.agentChartGroupsCollapsed = JSON.parse(window.localStorage.getItem(AGENT_CHART_GROUPS_STORAGE_KEY) || '{}') || {};
-  } catch (_err) {
-    state.agentChartGroupsCollapsed = {};
-  }
-}
-
-function persistAgentChartGroupPrefs() {
-  try {
-    window.localStorage.setItem(AGENT_CHART_GROUPS_STORAGE_KEY, JSON.stringify(state.agentChartGroupsCollapsed || {}));
-  } catch (_err) {
-    // Chart group persistence is optional.
-  }
-}
-
-function applyAgentChartGroupState() {
-  document.querySelectorAll('[data-agent-chart-group]').forEach(section => {
-    const group = section.dataset.agentChartGroup;
-    section.classList.toggle('collapsed', Boolean(state.agentChartGroupsCollapsed?.[group]));
-  });
-}
-
-function agentNumberOrNull(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function agentNestedValue(row, path) {
-  if (!row || !path) return undefined;
-  return String(path).split('.').reduce((current, key) => (
-    current && Object.prototype.hasOwnProperty.call(current, key) ? current[key] : undefined
-  ), row);
-}
-
-function agentSeriesValue(series, row, index, rows) {
-  if (typeof series.value === 'function') return agentNumberOrNull(series.value(row, index, rows));
-  const raw = agentNestedValue(row, series.key);
-  const number = agentNumberOrNull(raw);
-  if (number === null) return null;
-  return number * (series.scale === undefined ? 1 : Number(series.scale));
-}
-
-function agentRelativePercent(path) {
-  return (_row, index, rows) => {
-    const current = agentNumberOrNull(agentNestedValue(rows[index], path));
-    if (current === null) return null;
-    const baseRow = rows.find(item => agentNumberOrNull(agentNestedValue(item, path)) !== null);
-    const base = agentNumberOrNull(agentNestedValue(baseRow, path));
-    if (base === null || base === 0) return null;
-    return (current / base - 1) * 100;
-  };
-}
-
-function agentXValue(row, index, mode = 'steps') {
-  if (mode === 'seq') return Number(row.seq ?? index + 1);
-  if (mode === 'updates') return Number(row.updates ?? row.seq ?? index + 1);
-  if (mode === 'validation') return Number(row.updates ?? row.steps ?? row.seq ?? index + 1);
-  return Number(row.steps ?? row.seq ?? index + 1);
-}
-
-function agentRowTimeMs(row, index = 0) {
-  const parsed = Date.parse(row?.time || row?.updated_at || row?.created_at || '');
-  if (Number.isFinite(parsed)) return parsed;
-  const elapsed = Number(row?.elapsed_seconds);
-  if (Number.isFinite(elapsed)) return elapsed * 1000;
-  return index * 30000;
-}
-
-function agentDisplayBucketMs(rows) {
-  const clean = Array.isArray(rows) ? rows.filter(Boolean) : [];
-  if (clean.length < 2) return 0;
-  const start = agentRowTimeMs(clean[0], 0);
-  const end = agentRowTimeMs(clean[clean.length - 1], clean.length - 1);
-  const duration = Math.max(0, end - start);
-  if (duration >= 3 * 3600 * 1000) return 5 * 60 * 1000;
-  if (duration >= 30 * 60 * 1000) return 60 * 1000;
-  return 30 * 1000;
-}
-
-function aggregateAgentRowsByTime(rows, bucketMs = 0) {
-  const clean = Array.isArray(rows) ? rows.filter(Boolean) : [];
-  if (!bucketMs || clean.length <= 2) return clean;
-  const buckets = new Map();
-  clean.forEach((row, index) => {
-    const bucket = Math.floor(agentRowTimeMs(row, index) / bucketMs) * bucketMs;
-    buckets.set(bucket, { ...(buckets.get(bucket) || {}), ...row, _bucket_time: bucket, _bucket_count: (buckets.get(bucket)?._bucket_count || 0) + 1 });
-  });
-  const result = [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([, row]) => row);
-  const last = clean[clean.length - 1];
-  if (result.length && result[result.length - 1]?.seq !== last.seq) result[result.length - 1] = { ...result[result.length - 1], ...last };
-  return result;
-}
-
-function decimateAgentRows(rows, maxPoints = AGENT_CHART_MAX_POINTS) {
-  const clean = aggregateAgentRowsByTime(rows, agentDisplayBucketMs(rows));
-  if (clean.length <= maxPoints) return clean;
-  const result = [];
-  const stride = clean.length / maxPoints;
-  for (let i = 0; i < maxPoints; i += 1) {
-    result.push(clean[Math.min(clean.length - 1, Math.floor(i * stride))]);
-  }
-  const last = clean[clean.length - 1];
-  if (result[result.length - 1] !== last) result[result.length - 1] = last;
-  return result;
-}
-
-function agentRowHasSeriesValue(row, index, rows, series) {
-  return series.some(item => Number.isFinite(agentSeriesValue(item, row, index, rows)));
-}
-
-function agentRowsForChart(rows, series) {
-  const clean = Array.isArray(rows) ? rows.filter(Boolean) : [];
-  if (!clean.length || !series.length) return [];
-  return clean.filter((row, index) => agentRowHasSeriesValue(row, index, clean, series));
-}
-
-function agentNiceTicks(min, max, count = 5) {
-  const low = Number(min);
-  const high = Number(max);
-  if (!Number.isFinite(low) || !Number.isFinite(high)) return [];
-  const span = Math.abs(high - low) || 1;
-  const rough = span / Math.max(1, count - 1);
-  const pow = Math.pow(10, Math.floor(Math.log10(rough)));
-  const fraction = rough / pow;
-  const step = (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * pow;
-  const start = Math.ceil(low / step) * step;
-  const result = [];
-  for (let value = start; value <= high + step * 0.5 && result.length <= count + 2; value += step) {
-    result.push(value);
-  }
-  return result.length ? result : [low, high];
-}
-
-function agentMetricFormat(value, digits = 3, suffix = '') {
-  if (value === null || value === undefined || value === '') return '-';
-  if (!Number.isFinite(Number(value))) return '-';
-  const abs = Math.abs(Number(value));
-  let formatted;
-  if (abs >= 1000000) formatted = `${formatNumber(Number(value) / 1000000, 2)}M`;
-  else if (abs >= 10000) formatted = `${formatNumber(Number(value) / 1000, 1)}K`;
-  else formatted = formatNumber(Number(value), abs >= 100 ? 0 : digits);
-  return `${formatted}${suffix || ''}`;
-}
-
-function agentChartHiddenKey(canvasId, series) {
-  return `${canvasId}:${series.key || series.label}`;
-}
-
-function agentVisibleSeries(canvasId, series) {
-  return series.filter(item => !state.agentChartHidden[agentChartHiddenKey(canvasId, item)]);
-}
-
-function renderAgentChartLegend(canvasId, series, rows, hoverIndex) {
-  const legend = document.querySelector(`[data-agent-chart-legend="${canvasId}"]`);
-  if (!legend) return;
-  if (!series.length) {
-    legend.innerHTML = '<span class="agent-chart-empty">No data</span>';
-    return;
-  }
-  const index = Number.isInteger(hoverIndex) ? hoverIndex : null;
-  legend.innerHTML = series.map((item, seriesIndex) => {
-    const hidden = Boolean(state.agentChartHidden[agentChartHiddenKey(canvasId, item)]);
-    const value = index === null ? null : agentSeriesValue(item, rows[index] || {}, index, rows);
-    const color = item.color || AGENT_CHART_COLORS[seriesIndex % AGENT_CHART_COLORS.length];
-    const valueHtml = index === null ? '' : `<strong>${escapeHtml(agentMetricFormat(value, item.digits ?? 3, item.suffix || ''))}</strong>`;
-    return `<button class="agent-chart-legend-item ${hidden ? 'hidden-series' : ''}" type="button" data-agent-legend-chart="${escapeHtml(canvasId)}" data-agent-legend-key="${escapeHtml(agentChartHiddenKey(canvasId, item))}"><span class="agent-chart-legend-swatch" style="background:${escapeHtml(color)}"></span><span>${escapeHtml(item.label)}</span>${valueHtml}</button>`;
-  }).join('');
-}
-
-function drawAgentEmptyChart(ctx, width, height, message) {
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#9ca3af';
-  ctx.font = '13px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(message || 'No data', width / 2, height / 2);
-}
-
-function drawAgentMetricChart(canvasId, config) {
-  const canvas = $(canvasId);
-  if (!canvas) return;
-  const width = Math.max(360, canvas.clientWidth || 720);
-  const height = Math.max(210, canvas.clientHeight || 230);
-  const ratio = window.devicePixelRatio || 1;
-  canvas.width = width * ratio;
-  canvas.height = height * ratio;
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  const allSeries = config.series || [];
-  const visibleSeries = agentVisibleSeries(canvasId, allSeries);
-  const scopedRows = agentRowsForChart(config.rows || [], visibleSeries.length ? visibleSeries : allSeries);
-  const rows = decimateAgentRows(scopedRows, config.maxPoints || AGENT_CHART_MAX_POINTS);
-  const pad = { left: 58, right: 18, top: 18, bottom: 42 };
-  const plotW = Math.max(1, width - pad.left - pad.right);
-  const plotH = Math.max(1, height - pad.top - pad.bottom);
-  canvas.__agentChartLayout = { pad, plotW, rowsCount: 0, pointXs: [] };
-  const xMode = config.xMode || 'steps';
-  const xValues = rows.map((row, index) => agentXValue(row, index, xMode));
-  const yValues = [];
-  visibleSeries.forEach(series => {
-    rows.forEach((row, index) => {
-      const value = agentSeriesValue(series, row, index, rows);
-      if (Number.isFinite(value)) yValues.push(value);
-    });
-  });
-  const finiteX = xValues.filter(Number.isFinite);
-  const hoverState = state.agentChartHover?.[canvasId] || {};
-  const hoverIndex = rows.length && Number.isInteger(hoverState.index)
-    ? Math.max(0, Math.min(rows.length - 1, hoverState.index))
-    : null;
-  renderAgentChartLegend(canvasId, allSeries, rows, hoverIndex);
-  if (!rows.length || !visibleSeries.length || !yValues.length || !finiteX.length) {
-    drawAgentEmptyChart(ctx, width, height, !rows.length ? 'No data' : 'No visible metric data');
-    return;
-  }
-  let minY = Math.min(...yValues);
-  let maxY = Math.max(...yValues);
-  if (minY === maxY) {
-    const delta = Math.max(1, Math.abs(minY) * 0.08);
-    minY -= delta;
-    maxY += delta;
-  } else {
-    const padding = (maxY - minY) * 0.08;
-    minY -= padding;
-    maxY += padding;
-  }
-  const minX = Math.min(...finiteX);
-  const maxX = Math.max(...finiteX);
-  const xSpan = maxX - minX || 1;
-  const ySpan = maxY - minY || 1;
-  const toX = value => pad.left + ((Number(value) - minX) / xSpan) * plotW;
-  const toY = value => pad.top + (1 - ((Number(value) - minY) / ySpan)) * plotH;
-  canvas.__agentChartLayout = { pad, plotW, rowsCount: rows.length, pointXs: xValues.map(value => toX(value)) };
-  ctx.clearRect(0, 0, width, height);
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.beginPath();
-  ctx.moveTo(pad.left, pad.top);
-  ctx.lineTo(pad.left, pad.top + plotH);
-  ctx.lineTo(pad.left + plotW, pad.top + plotH);
-  ctx.stroke();
-  ctx.font = '11px sans-serif';
-  ctx.fillStyle = '#64748b';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  agentNiceTicks(minY, maxY, 5).forEach(tick => {
-    const y = toY(tick);
-    ctx.strokeStyle = '#eef2f7';
-    ctx.beginPath();
-    ctx.moveTo(pad.left, y);
-    ctx.lineTo(pad.left + plotW, y);
-    ctx.stroke();
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(agentMetricFormat(tick, config.yDigits ?? 3, config.ySuffix || ''), pad.left - 8, y);
-  });
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  agentNiceTicks(minX, maxX, 4).forEach(tick => {
-    const x = toX(tick);
-    ctx.strokeStyle = '#f1f5f9';
-    ctx.beginPath();
-    ctx.moveTo(x, pad.top);
-    ctx.lineTo(x, pad.top + plotH);
-    ctx.stroke();
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(agentMetricFormat(tick, 0, ''), x, pad.top + plotH + 7);
-  });
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#334155';
-  ctx.fillText(config.xLabel || (xMode === 'seq' ? 'record' : 'step'), pad.left + plotW / 2, height - 13);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(config.yLabel || 'value', pad.left, 3);
-
-  visibleSeries.forEach((series, seriesIndex) => {
-    const color = series.color || AGENT_CHART_COLORS[seriesIndex % AGENT_CHART_COLORS.length];
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.7;
-    ctx.beginPath();
-    let open = false;
-    rows.forEach((row, index) => {
-      const xValue = xValues[index];
-      const yValue = agentSeriesValue(series, row, index, rows);
-      if (!Number.isFinite(xValue) || !Number.isFinite(yValue)) {
-        return;
-      }
-      const x = toX(xValue);
-      const y = toY(yValue);
-      if (!open) {
-        ctx.moveTo(x, y);
-        open = true;
-      } else {
-        ctx.lineTo(x, y);
-      }
-    });
-    ctx.stroke();
-  });
-
-  if (Number.isInteger(hoverIndex) && rows[hoverIndex]) {
-    const x = toX(xValues[hoverIndex]);
-    ctx.save();
-    ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = '#64748b';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x, pad.top);
-    ctx.lineTo(x, pad.top + plotH);
-    ctx.stroke();
-    ctx.restore();
-    const tooltipRows = visibleSeries
-      .map((series, seriesIndex) => ({
-        series,
-        color: series.color || AGENT_CHART_COLORS[seriesIndex % AGENT_CHART_COLORS.length],
-        value: agentSeriesValue(series, rows[hoverIndex], hoverIndex, rows),
-      }))
-      .filter(item => Number.isFinite(item.value));
-    tooltipRows.forEach(item => {
-      const y = toY(item.value);
-      ctx.fillStyle = item.color;
-      ctx.beginPath();
-      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-    });
-    if (tooltipRows.length) {
-      const lines = [`${config.xLabel || (xMode === 'seq' ? 'record' : 'step')}: ${agentMetricFormat(xValues[hoverIndex], 0)}`]
-        .concat(tooltipRows.slice(0, 5).map(item => `${item.series.label}: ${agentMetricFormat(item.value, item.series.digits ?? 3, item.series.suffix || '')}`));
-      ctx.font = '11px sans-serif';
-      const boxW = Math.min(220, Math.max(...lines.map(line => ctx.measureText(line).width)) + 18);
-      const boxH = 18 + lines.length * 16;
-      const boxX = Math.min(width - boxW - 8, Math.max(pad.left + 4, x + 10));
-      const boxY = pad.top + 8;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-      ctx.fillRect(boxX, boxY, boxW, boxH);
-      ctx.fillStyle = '#f8fafc';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      lines.forEach((line, index) => ctx.fillText(line, boxX + 9, boxY + 8 + index * 16));
-    }
-  }
-}
-
-function drawAllAgentCharts() {
-  if (state.agentActiveTab !== 'monitor') return;
-  applyAgentChartGroupState();
-  const trainingRows = state.agentRunMetrics.filter(item => item.kind === 'training');
-  const validationRows = state.agentRunMetrics.filter(item => item.kind === 'validation');
-  drawAgentMetricChart('agentStepsChart', {
-    rows: trainingRows,
-    xMode: 'seq',
-    xLabel: 'Record',
-    yLabel: 'Count',
-    series: [
-      { key: 'steps', label: 'steps', digits: 0 },
-      { key: 'updates', label: 'updates', digits: 0 },
-      { key: 'episodes', label: 'episodes', digits: 0 },
-    ],
-  });
-  drawAgentMetricChart('agentSpeedChart', {
-    rows: trainingRows,
-    xMode: 'steps',
-    xLabel: 'Step',
-    yLabel: 'Speed',
-    series: [
-      { key: 'steps_per_second', label: 'steps/s', digits: 2 },
-      { key: 'collect_steps_per_second', label: 'collect/s', digits: 2 },
-      { key: 'optimize_steps_per_second', label: 'optimize/s', digits: 2 },
-      { key: 'parallel_envs', label: 'parallel envs', digits: 0 },
-    ],
-  });
-  drawAgentMetricChart('agentHardwareChart', {
-    rows: trainingRows,
-    xMode: 'steps',
-    xLabel: 'Step',
-    yLabel: 'Percent',
-    ySuffix: '%',
-    series: [
-      { key: 'cpu_percent', label: 'CPU', suffix: '%', digits: 1 },
-      { key: 'memory_percent', label: 'RAM', suffix: '%', digits: 1 },
-      { key: 'gpu_percent', label: 'GPU', suffix: '%', digits: 1 },
-      { key: 'gpu_memory_percent', label: 'VRAM', suffix: '%', digits: 1 },
-    ],
-  });
-  drawAgentMetricChart('agentLatencyChart', {
-    rows: trainingRows,
-    xMode: 'steps',
-    xLabel: 'Step',
-    yLabel: 'Milliseconds',
-    series: [
-      { key: 'model_seconds', label: 'model ms', scale: 1000, digits: 2 },
-      { key: 'environment_seconds', label: 'env ms', scale: 1000, digits: 2 },
-      { key: 'data_load_seconds', label: 'data ms', scale: 1000, digits: 2 },
-      { key: 'reset_seconds', label: 'reset ms', scale: 1000, digits: 2 },
-      { key: 'initialized_env_seconds', label: 'init ms', scale: 1000, digits: 2 },
-      { key: 'collect_seconds', label: 'collect ms', scale: 1000, digits: 2 },
-      { key: 'optimize_seconds', label: 'optimize ms', scale: 1000, digits: 2 },
-    ],
-  });
-  drawAgentMetricChart('agentRewardChart', {
-    rows: trainingRows,
-    xMode: 'steps',
-    xLabel: 'Step',
-    yLabel: 'Return / Reward',
-    series: [
-      { key: 'reward', label: 'reward', digits: 6 },
-      { key: 'nav_pct', value: agentRelativePercent('nav'), label: 'NAV change', suffix: '%', digits: 3 },
-    ],
-  });
-  drawAgentMetricChart('agentActionChart', {
-    rows: trainingRows,
-    xMode: 'steps',
-    xLabel: 'Step',
-    yLabel: 'Count / Cost',
-    series: [
-      { key: 'buy_actions', label: 'buy', digits: 0 },
-      { key: 'hold_actions', label: 'hold', digits: 0 },
-      { key: 'sell_actions', label: 'sell', digits: 0 },
-      { key: 'blocked_orders', label: 'blocked', digits: 0 },
-      { key: 'total_fees', label: 'fees', digits: 2 },
-    ],
-  });
-  drawAgentMetricChart('agentLossChart', {
-    rows: trainingRows,
-    xMode: 'steps',
-    xLabel: 'Step',
-    yLabel: 'Loss',
-    series: [
-      { key: 'loss', label: 'total', digits: 5 },
-      { key: 'policy_loss', label: 'policy', digits: 5 },
-      { key: 'value_loss', label: 'value', digits: 5 },
-    ],
-  });
-  drawAgentMetricChart('agentPolicyChart', {
-    rows: trainingRows,
-    xMode: 'steps',
-    xLabel: 'Step',
-    yLabel: 'PPO Health',
-    series: [
-      { key: 'entropy', label: 'entropy', digits: 5 },
-      { key: 'approximate_kl', label: 'KL', digits: 5 },
-      { key: 'clip_fraction', label: 'clip', digits: 4 },
-      { key: 'learning_rate', label: 'LR', digits: 8 },
-    ],
-  });
-  drawAgentMetricChart('agentValidationReturnChart', {
-    rows: validationRows,
-    xMode: 'validation',
-    xLabel: 'Validation',
-    yLabel: 'Percent',
-    ySuffix: '%',
-    series: [
-      { key: 'metrics.total_return', label: 'return', scale: 100, suffix: '%', digits: 2 },
-      { key: 'metrics.maximum_drawdown', label: 'drawdown', scale: 100, suffix: '%', digits: 2 },
-    ],
-  });
-  drawAgentMetricChart('agentValidationRiskChart', {
-    rows: validationRows,
-    xMode: 'validation',
-    xLabel: 'Validation',
-    yLabel: 'Score',
-    series: [
-      { key: 'metrics.sharpe', label: 'sharpe', digits: 3 },
-      { key: 'metrics.calmar', label: 'calmar', digits: 3 },
-      { key: 'metrics.return_observations', label: 'observations', digits: 0 },
-    ],
-  });
-}
-
-
-function agentPollingIntervalMs(status = {}) {
-  const steps = Number(status.steps || 0);
-  const points = state.agentRunMetrics.length;
-  if (steps >= 1000000 || points > 6000) return 30000;
-  if (steps >= 300000 || points > 3000) return 15000;
-  if (steps >= 50000 || points > 1000) return 5000;
-  return 2000;
-}
-
-function startPollingAgentRun(runId) {
-  state.agentRunId = runId;
-  if (state.agentPollTimer) clearTimeout(state.agentPollTimer);
-  const generation = ++state.agentPollGeneration;
-  state.agentPollBusy = false;
-  async function poll() {
-    if (state.agentPollBusy || generation !== state.agentPollGeneration) return;
-    state.agentPollBusy = true;
-    let nextStatus = {};
-    let continuePolling = true;
-    try {
-      const firstLoad = state.agentLoadedRunId !== runId;
-      const detailPromise = apiGet(`/api/agent/runs/${runId}${firstLoad ? '' : '?records=0'}`);
-      const [res, metrics, logs] = await Promise.all([
-        detailPromise,
-        firstLoad ? Promise.resolve({ data: [] }) : apiGet(`/api/agent/runs/${runId}/metrics?after=${state.agentMetricSeq}`),
-        firstLoad ? Promise.resolve({ data: [] }) : apiGet(`/api/agent/runs/${runId}/logs?after=${state.agentLogSeq}`),
-      ]);
-      if (!firstLoad) {
-        res.data.metrics = metrics.data || [];
-        res.data.logs = logs.data || [];
-      }
-      if (generation !== state.agentPollGeneration) return;
-      renderAgentRun(res.data, { mergeRecords: !firstLoad });
-      state.agentPollFailures = 0;
-      nextStatus = res.data.status || {};
-      state.agentLoadedRunId = runId;
-      const validationActive = ['starting', 'running'].includes(res.data.validation_status?.status)
-        || Boolean(res.data.validation_status?.pending_task_id);
-      if (['completed', 'failed', 'stopped', 'interrupted', 'paused'].includes(res.data.status.status) && !validationActive) {
-        continuePolling = false;
-        state.agentPollTimer = null;
-        loadAgentRuns();
-      }
-    } catch (err) {
-      state.agentPollFailures = (state.agentPollFailures || 0) + 1;
-      $('agentJobStatus').textContent = `Training Status: polling temporarily failed ${state.agentPollFailures}/5 / ${err.message}`;
-      continuePolling = state.agentPollFailures < 5;
-      if (!continuePolling) state.agentPollTimer = null;
-    } finally {
-      if (generation === state.agentPollGeneration) state.agentPollBusy = false;
-      if (continuePolling && generation === state.agentPollGeneration) {
-        state.agentPollTimer = setTimeout(poll, agentPollingIntervalMs(nextStatus));
-      }
-    }
-  }
-  poll();
-}
-
-async function startAgentTraining() {
-  try {
-    setAgentConfigLocked(true);
-    $('agentJobStatus').textContent = 'Training Status: queued / validating request';
-    const res = await apiPost('/api/agent/runs/start', getAgentPayload());
-    state.agentRunId = res.data.run_id;
-    showAgentTab('monitor');
-    startPollingAgentRun(state.agentRunId);
-    await loadAgentRuns();
-  } catch (err) {
-    setAgentConfigLocked(false);
-    alert(`Start Agent training failed: ${err.message}`);
-  }
-}
-
-async function stopAgentTraining() {
-  return controlAgentRun('stop');
-}
-
-async function controlAgentRun(action) {
-  if (!state.agentRunId) return;
-  try {
-    await apiPost(`/api/agent/runs/${state.agentRunId}/${action}`, {});
-    if (action === 'resume') startPollingAgentRun(state.agentRunId);
-    else startPollingAgentRun(state.agentRunId);
-  } catch (err) {
-    alert(`${action} Agent run failed: ${err.message}`);
-  }
-}
-
-
-async function loadAgentRuns() {
-  try {
-    const res = await apiGet('/api/agent/runs');
-    state.agentRuns = res.data || [];
-    $('agentRunsTableBody').innerHTML = state.agentRuns.map(run => `
-      <tr><td><div class="agent-run-name">${escapeHtml(run.run_name || run.run_id)}</div><div class="agent-run-meta">${escapeHtml(run.run_id || '')}</div></td>
-      <td><span class="status-pill ${run.status === 'completed' ? 'ok' : run.status === 'failed' || run.status === 'interrupted' ? 'bad' : 'warn'}">${escapeHtml(run.status || '-')}</span></td>
-      <td><span class="status-pill ${run.validation_status === 'completed' || run.validation_status === 'idle' ? 'ok' : run.validation_status === 'failed' ? 'bad' : 'warn'}">${escapeHtml(run.validation_status || 'idle')}</span></td>
-      <td>${Math.round(Number(run.progress || 0) * 100)}%</td><td>${run.steps ?? 0} / ${run.total_steps ?? '-'}</td><td>${escapeHtml(run.updated_at || '-')}</td>
-      <td><div class="row-actions"><button class="small secondary" data-agent-view-run="${escapeHtml(run.run_id)}">View</button><button class="small secondary" data-agent-manage-run="${escapeHtml(run.run_id)}">Manage</button>${['paused', 'failed', 'interrupted', 'stopped'].includes(run.status) && run.latest_checkpoint ? `<button class="small" data-agent-resume-run="${escapeHtml(run.run_id)}">Resume</button>` : ''}</div></td></tr>
-    `).join('') || '<tr><td colspan="7" class="muted">No persistent runs yet.</td></tr>';
-  } catch (err) {
-    $('agentRunsTableBody').innerHTML = `<tr><td colspan="7" class="error-cell">Runs failed: ${escapeHtml(err.message)}</td></tr>`;
-  }
-}
-
-function renderAgentCheckpoints(checkpoints) {
-  const body = $('agentCheckpointsTableBody');
-  if (!body) return;
-  body.innerHTML = checkpoints.map(item => `<tr><td>${escapeHtml(item.name)}</td><td>${formatNumber(Number(item.size_bytes) / 1048576, 2)} MB</td><td>${escapeHtml(item.modified_at)}</td><td>${escapeHtml(item.path)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No checkpoint saved yet.</td></tr>';
-}
-
-function closeAgentRunManageModal() {
-  $('agentCheckpointModal')?.classList.add('hidden');
-  state.agentSelectedManageRun = null;
-}
-
-function renderAgentRunManageModal(data) {
-  const job = data.status || {};
-  const checkpoints = data.checkpoints || [];
-  state.agentSelectedManageRun = job.run_id || null;
-  $('agentCheckpointModalTitle').textContent = `Run Checkpoints: ${job.run_name || job.run_id || '-'}`;
-  $('agentCheckpointModalSubtitle').textContent = job.run_id || '-';
-  renderSummaryCards('agentCheckpointModalSummary', [
-    { label: 'Status', value: job.status || '-' },
-    { label: 'Steps', value: `${job.steps ?? 0} / ${job.total_steps ?? '-'}` },
-    { label: 'Updates / Episodes', value: `${job.updates ?? 0} / ${job.episodes ?? 0}` },
-    { label: 'Latest', value: job.latest_checkpoint || '-' },
-    { label: 'Best', value: job.best_checkpoint || '-' },
-    { label: 'Updated', value: job.updated_at || '-' },
-  ]);
-  $('agentCheckpointModalTableBody').innerHTML = checkpoints.map(item => {
-    const validation = item.validation || {};
-    const validationText = validation.status === 'completed'
-      ? `return ${formatPercent(validation.total_return)} / dd ${formatPercent(validation.maximum_drawdown)}`
-      : (validation.status || '-');
-    return `<tr>
-      <td><div class="agent-run-name">${escapeHtml(item.name)}</div><div class="agent-run-meta agent-run-path">${escapeHtml(item.path || '')}</div></td>
-      <td>${item.step ?? '-'}</td>
-      <td>${escapeHtml(item.reason || '-')}</td>
-      <td>${escapeHtml(validationText)}</td>
-      <td>${formatNumber(Number(item.size_bytes) / 1048576, 2)} MB</td>
-      <td>${escapeHtml(item.modified_at || '-')}</td>
-      <td><button class="small secondary" type="button" data-agent-export-checkpoint="${escapeHtml(item.path || '')}" data-agent-export-default-name="${escapeHtml((job.run_name || job.run_id || 'agent') + '_' + String(item.step || 'step'))}">Export Model</button></td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="7" class="muted">No checkpoint saved yet.</td></tr>';
-  $('agentCheckpointModal').classList.remove('hidden');
-}
-
-async function openAgentRunManage(runId) {
-  try {
-    const res = await apiGet(`/api/agent/runs/${runId}?records=0`);
-    renderAgentRunManageModal(res.data || {});
-  } catch (err) {
-    alert(`Load checkpoints failed: ${err.message}`);
-  }
-}
-
-async function viewAgentRun(runId) {
-  state.agentRunId = runId;
-  showAgentTab('monitor');
-  startPollingAgentRun(runId);
-}
-
-function openAgentMonitorWindow() {
-  const run = state.agentRunId ? `&run=${encodeURIComponent(state.agentRunId)}` : '';
-  window.open(`/?section=agent&agentTab=monitor${run}`, 'pocketagent-agent-monitor', 'width=1440,height=960');
-}
-
-function captureVisualizationModeSnapshot() {
-  const visualization = state.visualization;
-  return {
-    payload: visualization.payload,
-    selectedFreq: visualization.selectedFreq,
-    windowOffset: visualization.windowOffset,
-    totalRows: visualization.totalRows,
-    viewStart: visualization.viewStart,
-    viewEnd: visualization.viewEnd,
-    hoverIndex: visualization.hoverIndex,
-    hoverPanel: visualization.hoverPanel,
-    referenceGuides: { ...(visualization.referenceGuides || emptyVisualizationReferenceGuides()) },
-    mainOverlays: [...visualization.mainOverlays],
-    mainOverlayPreferenceExplicit: visualization.mainOverlayPreferenceExplicit,
-    panelSelections: [...visualization.panelSelections],
-    panelSelectionsByFreq: Object.fromEntries(
-      Object.entries(visualization.panelSelectionsByFreq || {}).map(([freq, selections]) => [freq, [...selections]])
-    ),
-    inspectorVisible: visualization.inspectorVisible,
-    pendingZoom: visualization.pendingZoom ? { ...visualization.pendingZoom } : null,
-  };
-}
-
-function saveVisualizationModeSnapshot(mode) {
-  const payload = state.visualization.payload;
-  if (mode === 'market' && payload && payload.mode !== 'evaluation') {
-    state.visualization.modeSnapshots.market = captureVisualizationModeSnapshot();
-  }
-  if (mode === 'evaluation' && payload?.mode === 'evaluation') {
-    state.visualization.modeSnapshots.evaluation = captureVisualizationModeSnapshot();
-  }
-}
-
-function restoreVisualizationModeSnapshot(mode) {
-  const snapshot = state.visualization.modeSnapshots?.[mode];
-  if (!snapshot?.payload) return false;
-  Object.assign(state.visualization, {
-    payload: snapshot.payload,
-    selectedFreq: snapshot.selectedFreq,
-    windowOffset: snapshot.windowOffset,
-    totalRows: snapshot.totalRows,
-    viewStart: snapshot.viewStart,
-    viewEnd: snapshot.viewEnd,
-    hoverIndex: snapshot.hoverIndex,
-    hoverPanel: snapshot.hoverPanel,
-    referenceGuides: { ...(snapshot.referenceGuides || emptyVisualizationReferenceGuides()) },
-    mainOverlays: new Set(snapshot.mainOverlays || []),
-    mainOverlayPreferenceExplicit: Boolean(snapshot.mainOverlayPreferenceExplicit),
-    panelSelections: [...(snapshot.panelSelections || state.visualization.panelSelections)],
-    panelSelectionsByFreq: Object.fromEntries(
-      Object.entries(snapshot.panelSelectionsByFreq || {}).map(([freq, selections]) => [freq, [...selections]])
-    ),
-    inspectorVisible: snapshot.inspectorVisible !== false,
-    pendingZoom: snapshot.pendingZoom ? { ...snapshot.pendingZoom } : null,
-  });
-  if (mode === 'market') renderVisualizationControls({ keepSymbol: true, keepFreq: true });
-  initializeVisualizationFeatureControls(snapshot.payload);
-  setVisualizationQuote(snapshot.payload);
-  drawVisualizationPayload(snapshot.payload);
-  return true;
-}
-
-function showVisualTab(tab) {
-  const selected = tab === 'live' || tab === 'evaluation' ? tab : 'market';
-  const previousTab = state.evaluationReplay.activeTab || 'market';
-  saveVisualizationModeSnapshot(previousTab);
-  state.evaluationReplay.activeTab = selected;
-  if (selected !== 'evaluation') stopEvaluationReplayPolling();
-  document.querySelectorAll('.visual-tab').forEach(button => {
-    button.classList.toggle('active', button.dataset.visualTab === selected);
-  });
-  const shell = $('visualShell');
-  if (shell) {
-    shell.classList.remove('visual-mode-market', 'visual-mode-evaluation', 'visual-mode-live');
-    shell.classList.add(`visual-mode-${selected}`);
-  }
-  $('visualEvaluationPane')?.classList.toggle('hidden', selected !== 'evaluation');
-  $('visualLivePane')?.classList.toggle('hidden', selected !== 'live');
-  $('evaluationStatsPanel')?.classList.toggle('hidden', selected !== 'evaluation');
-  $('visualFeatureInspector')?.classList.toggle('hidden', selected === 'evaluation' || !state.visualization.inspectorVisible);
-  if (selected === 'evaluation') {
-    restoreVisualizationModeSnapshot('evaluation');
-    setVisualStatus('');
-    loadEvaluationRuns({ silent: true })
-      .then(() => loadEvaluationReplay($('visualEvaluationRunSelect')?.value || state.evaluationRunId))
-      .catch(() => {
-        if (state.evaluationReplay.activeTab === 'evaluation') drawEvaluationReplay();
-      });
-  } else if (selected === 'market') {
-    renderEvaluationStats(null);
-    if (restoreVisualizationModeSnapshot('market')) return;
-    if (state.visualization.payload?.mode === 'evaluation') {
-      state.visualization.selectedFreq = 'daily';
-      renderVisualizationControls({ keepSymbol: true, keepFreq: false });
-      void loadVisualizationChart({ anchor: 'latest' });
-    } else drawVisualizationPayload(state.visualization.payload);
-  }
-}
-
-function stopEvaluationReplayPolling() {
-  if (state.evaluationReplay.pollTimer) {
-    clearTimeout(state.evaluationReplay.pollTimer);
-    state.evaluationReplay.pollTimer = null;
-  }
-}
-
-async function loadEvaluationModels() {
-  try {
-    const res = await apiGet('/api/evaluation/models');
-    state.evaluationModels = res.data || [];
-    renderEvaluationModels();
-  } catch (err) {
-    if ($('evaluationModelsTableBody')) $('evaluationModelsTableBody').innerHTML = `<tr><td colspan="4" class="error-cell">Models failed: ${escapeHtml(err.message)}</td></tr>`;
-  }
-}
-
-function renderEvaluationModels() {
-  const select = $('evaluationModelSelect');
-  if (select) {
-    select.innerHTML = state.evaluationModels.map(model => `<option value="${escapeHtml(model.name)}">${escapeHtml(model.name)}</option>`).join('') || '<option value="">No exported models</option>';
-  }
-  const body = $('evaluationModelsTableBody');
-  if (body) {
-    body.innerHTML = state.evaluationModels.map(model => `
-      <tr><td>${escapeHtml(model.name)}</td><td>${escapeHtml(model.source_run_id || '-')}</td><td>${escapeHtml(model.source_step ?? '-')}</td><td>${escapeHtml(model.exported_at || '-')}</td></tr>
-    `).join('') || '<tr><td colspan="4" class="muted">No exported models.</td></tr>';
-  }
-}
-
-function isEvaluationRunActive(run) {
-  return ['queued', 'running'].includes(String(run?.status || '').toLowerCase());
-}
-
-function selectedEvaluationRun() {
-  const runId = state.evaluationRunId || $('visualEvaluationRunSelect')?.value || '';
-  return state.evaluationRuns.find(run => run.run_id === runId) || null;
-}
-
-function updateEvaluationStopButtons() {
-  const run = selectedEvaluationRun();
-  const active = isEvaluationRunActive(run);
-  if ($('stopEvaluationBtn')) $('stopEvaluationBtn').disabled = !active;
-  if ($('stopVisualEvaluationBtn')) $('stopVisualEvaluationBtn').disabled = !active;
-}
-
-function getEvaluationPayload() {
-  return {
-    model_name: $('evaluationModelSelect')?.value || '',
-    feature_dataset_dir: $('evaluationFeatureDataset')?.value.trim() || 'runtime_layer/reports/feature_dataset',
-    symbol: $('evaluationSymbol')?.value.trim().toUpperCase() || '',
-    start: $('evaluationStart')?.value || '',
-    end: $('evaluationEnd')?.value || '',
-    device: $('evaluationDevice')?.value || 'cpu',
-    initial_cash: Number($('evaluationInitialCash')?.value || 1000000),
-    lot_size: Number($('evaluationLotSize')?.value || 100),
-    max_position_ratio: Number($('evaluationMaxPosition')?.value || 0.2),
-    commission_rate: Number($('evaluationCommission')?.value || 0.0003),
-    minimum_commission: Number($('evaluationMinCommission')?.value || 5),
-    base_slippage_rate: Number($('evaluationSlippage')?.value || 0.0002),
-  };
-}
-
-async function startEvaluation() {
-  try {
-    const payload = getEvaluationPayload();
-    if (!payload.model_name) return alert('Export and select an evaluation model first.');
-    if (!payload.symbol || !payload.start || !payload.end) return alert('Symbol, start date, and end date are required.');
-    $('evaluationStartStatus').textContent = 'Evaluation queued.';
-    const res = await apiPost('/api/evaluation/start', payload);
-    state.evaluationRunId = res.data.run_id;
-    $('evaluationStartStatus').textContent = `Evaluation started: ${res.data.run_id}`;
-    await loadEvaluationRuns();
-    updateEvaluationStopButtons();
-    showSection('visualization');
-    showVisualTab('evaluation');
-    setVisualEvaluationRun(res.data.run_id);
-    startEvaluationReplayPolling(res.data.run_id);
-  } catch (err) {
-    $('evaluationStartStatus').textContent = `Start failed: ${err.message}`;
-    alert(`Start Evaluation failed: ${err.message}`);
-  }
-}
-
-async function stopEvaluation(runId = null) {
-  const target = runId || state.evaluationRunId || $('visualEvaluationRunSelect')?.value;
-  if (!target) return alert('Select an evaluation run first.');
-  try {
-    if ($('stopEvaluationBtn')) $('stopEvaluationBtn').disabled = true;
-    if ($('stopVisualEvaluationBtn')) $('stopVisualEvaluationBtn').disabled = true;
-    $('evaluationStartStatus').textContent = `Stopping evaluation: ${target}`;
-    const res = await apiPost(`/api/evaluation/runs/${encodeURIComponent(target)}/stop`, {});
-    $('evaluationStartStatus').textContent = res.data?.message || `Stop requested: ${target}`;
-    await loadEvaluationRuns({ silent: true });
-    await loadEvaluationReplay(target);
-  } catch (err) {
-    $('evaluationStartStatus').textContent = `Stop failed: ${err.message}`;
-    alert(`Stop Evaluation failed: ${err.message}`);
-  } finally {
-    updateEvaluationStopButtons();
-  }
-}
-
-async function loadEvaluationRuns({ silent = false } = {}) {
-  try {
-    const res = await apiGet('/api/evaluation/runs');
-    state.evaluationRuns = res.data || [];
-    renderEvaluationRuns();
-    renderVisualEvaluationRunSelect();
-    updateEvaluationStopButtons();
-  } catch (err) {
-    if (!silent && $('evaluationRunsTableBody')) $('evaluationRunsTableBody').innerHTML = `<tr><td colspan="8" class="error-cell">Runs failed: ${escapeHtml(err.message)}</td></tr>`;
-  }
-}
-
-function renderEvaluationRuns() {
-  const body = $('evaluationRunsTableBody');
-  if (!body) return;
-  body.innerHTML = state.evaluationRuns.map(run => `
-    <tr>
-      <td><div class="agent-run-name">${escapeHtml(run.run_id)}</div><div class="agent-run-meta">${escapeHtml(run.path || '')}</div></td>
-      <td>${escapeHtml(run.model_name || '-')}</td>
-      <td>${escapeHtml(run.symbol || '-')}</td>
-      <td><span class="status-pill ${run.status === 'completed' ? 'ok' : run.status === 'failed' ? 'bad' : 'warn'}">${escapeHtml(run.status || '-')}</span></td>
-      <td>${formatPercent(run.total_return)}</td>
-      <td>${formatPercent(run.maximum_drawdown)}</td>
-      <td>${escapeHtml(run.updated_at || '-')}</td>
-      <td>
-        <button class="small secondary" data-evaluation-view-run="${escapeHtml(run.run_id)}" type="button">View</button>
-        ${isEvaluationRunActive(run) ? `<button class="small secondary danger-text" data-evaluation-stop-run="${escapeHtml(run.run_id)}" type="button">Stop</button>` : ''}
-      </td>
-    </tr>
-  `).join('') || '<tr><td colspan="8" class="muted">No evaluation runs.</td></tr>';
-}
-
-function renderVisualEvaluationRunSelect() {
-  const select = $('visualEvaluationRunSelect');
-  if (!select) return;
-  const current = select.value || state.evaluationRunId || state.evaluationRuns[0]?.run_id || '';
-  select.innerHTML = state.evaluationRuns.map(run => `<option value="${escapeHtml(run.run_id)}">${escapeHtml(run.run_id)} / ${escapeHtml(run.symbol || '-')} / ${escapeHtml(run.status || '-')}</option>`).join('') || '<option value="">No evaluation runs</option>';
-  select.value = state.evaluationRuns.some(run => run.run_id === current) ? current : (state.evaluationRuns[0]?.run_id || '');
-}
-
-function setVisualEvaluationRun(runId) {
-  state.evaluationRunId = runId;
-  state.evaluationReplay.runId = runId;
-  if ($('visualEvaluationRunSelect')) $('visualEvaluationRunSelect').value = runId || '';
-  updateEvaluationStopButtons();
-}
-
-async function loadEvaluationReplay(runId = null) {
-  const selected = runId || $('visualEvaluationRunSelect')?.value || state.evaluationRunId;
-  if (!selected) {
-    state.evaluationReplay.payload = null;
-    if (state.evaluationReplay.activeTab === 'evaluation') drawEvaluationReplay();
-    return;
-  }
-  setVisualEvaluationRun(selected);
-  try {
-    const res = await apiGet(`/api/evaluation/runs/${encodeURIComponent(selected)}?event_limit=10000`);
-    state.evaluationReplay.payload = res.data || null;
-    if (state.evaluationReplay.activeTab === 'evaluation') drawEvaluationReplay();
-    updateEvaluationStopButtons();
-    const status = res.data?.status || {};
-    if (state.evaluationReplay.activeTab === 'evaluation' && ['queued', 'running'].includes(status.status)) {
-      startEvaluationReplayPolling(selected);
-    }
-  } catch (err) {
-    if (state.evaluationReplay.activeTab === 'evaluation' && $('visualEvaluationStatus')) {
-      $('visualEvaluationStatus').textContent = `Replay load failed: ${err.message}`;
-    }
-  }
-}
-
-function startEvaluationReplayPolling(runId) {
-  if (state.evaluationReplay.pollTimer) clearTimeout(state.evaluationReplay.pollTimer);
-  const generationRun = runId;
-  async function poll() {
-    if (state.evaluationReplay.runId !== generationRun) return;
-    if (state.evaluationReplay.activeTab !== 'evaluation') {
-      state.evaluationReplay.pollTimer = null;
-      return;
-    }
-    await loadEvaluationReplay(generationRun);
-    const status = state.evaluationReplay.payload?.status?.status;
-    if (state.evaluationReplay.activeTab === 'evaluation' && ['queued', 'running'].includes(status)) {
-      state.evaluationReplay.pollTimer = setTimeout(poll, 1500);
-    } else {
-      state.evaluationReplay.pollTimer = null;
-      await loadEvaluationRuns({ silent: true });
-    }
-  }
-  state.evaluationReplay.pollTimer = setTimeout(poll, 1000);
-}
-
-function evaluationFeatureColor(index) {
-  const palette = ['#60a5fa', '#f59e0b', '#a78bfa', '#34d399', '#f472b6', '#22d3ee', '#fb7185', '#eab308'];
-  return palette[index % palette.length];
-}
-
-function buildEvaluationVisualizationIndicators(events) {
-  const keys = [];
-  const seen = new Set();
-  events.forEach(event => {
-    Object.entries(event.features || {}).forEach(([freq, values]) => {
-      Object.keys(values || {}).forEach(key => {
-        const id = `${freq}__${key}`;
-        if (seen.has(id)) return;
-        seen.add(id);
-        keys.push({ id, freq, key, label: `${freq} ${key}` });
-      });
-    });
-  });
-  return keys.map((item, index) => {
-    const values = events.map(event => {
-      const value = event.features?.[item.freq]?.[item.key];
-      const number = Number(value);
-      return Number.isFinite(number) ? number : null;
-    });
-    return {
-      id: `eval_feature_${item.id.replace(/[^A-Za-z0-9_:-]/g, '_')}`,
-      label: item.label,
-      render_target: 'sub_panel',
-      default_visible: index < 3,
-      axis: { mode: 'auto' },
-      display_series: [{
-        id: 'value',
-        label: item.label,
-        model_field: 'value',
-        style: 'line',
-        color: evaluationFeatureColor(index),
-      }],
-      model_series: [{
-        id: 'value',
-        label: item.label,
-        values,
-      }],
-    };
-  });
-}
-
-function buildEvaluationVisualizationPayload(payload) {
-  const events = payload?.events || [];
-  if (!payload || !events.length) return null;
-  const bars = events.map(event => {
-    const bar = event.bar || {};
-    return {
-      datetime: bar.datetime || event.time,
-      open: bar.open,
-      high: bar.high,
-      low: bar.low,
-      close: bar.close,
-      volume: bar.volume,
-      amount: bar.amount,
-      pctChg: bar.pctChg,
-      turn: bar.turn,
-      is_st: bar.is_st,
-      _evaluationEvent: event,
-    };
-  });
-  const last = bars[bars.length - 1] || {};
-  const previous = bars.length > 1 ? bars[bars.length - 2] : null;
-  const close = Number(last.close);
-  const previousClose = Number(previous?.close);
-  const change = Number.isFinite(close) && Number.isFinite(previousClose) ? close - previousClose : null;
-  const pctChg = Number.isFinite(close) && Number.isFinite(previousClose) && previousClose !== 0 ? close / previousClose - 1 : last.pctChg;
-  return {
-    mode: 'evaluation',
-    run_id: payload.run_id,
-    status: payload.status,
-    symbol: payload.config?.symbol || payload.status?.symbol || events[0]?.symbol || '-',
-    freq: 'evaluation',
-    adjust: payload.config?.model_name || 'model replay',
-    rows: bars.length,
-    total_rows: bars.length,
-    bars,
-    summary: {
-      symbol: payload.config?.symbol || events[0]?.symbol || '-',
-      latest_datetime: last.datetime,
-      latest_close: close,
-      change,
-      pctChg,
-      total_return: payload.summary?.metrics?.total_return,
-      maximum_drawdown: payload.summary?.metrics?.maximum_drawdown,
-    },
-    features: {
-      indicators: buildEvaluationVisualizationIndicators(events),
-    },
-    evaluation: payload,
-  };
-}
-
-function applyEvaluationVisualizationPayload(payload) {
-  const visualPayload = buildEvaluationVisualizationPayload(payload);
-  if (!visualPayload) {
-    state.visualization.payload = null;
-    state.visualization.viewStart = 0;
-    state.visualization.viewEnd = 0;
-    setVisualizationQuote(null);
-    drawVisualizationPayload(null);
-    renderEvaluationStats(null);
-    return;
-  }
-  const previousRunId = state.evaluationReplay.appliedRunId;
-  const previousCount = state.evaluationReplay.appliedEventCount || 0;
-  const atRightEdge = previousCount > 0 && state.visualization.viewEnd >= previousCount - 2;
-  const windowSize = Math.max(20, state.visualization.viewEnd - state.visualization.viewStart || VISUAL_DEFAULT_VISIBLE_BARS);
-  const shouldReset = previousRunId !== visualPayload.run_id || state.visualization.payload?.mode !== 'evaluation';
-  state.visualization.payload = visualPayload;
-  state.visualization.windowOffset = 0;
-  state.visualization.totalRows = visualPayload.bars.length;
-  state.visualization.selectedFreq = 'evaluation';
-  state.evaluationReplay.appliedRunId = visualPayload.run_id;
-  state.evaluationReplay.appliedEventCount = visualPayload.bars.length;
-  initializeVisualizationFeatureControls(visualPayload);
-  if (shouldReset) {
-    resetVisualizationView(visualPayload.bars, 'latest', Math.min(VISUAL_DEFAULT_VISIBLE_BARS, visualPayload.bars.length));
-  } else if (atRightEdge || state.visualization.viewEnd > visualPayload.bars.length) {
-    state.visualization.viewEnd = visualPayload.bars.length;
-    state.visualization.viewStart = Math.max(0, visualPayload.bars.length - windowSize);
-  } else {
-    clampVisualizationView(state.visualization.viewStart, state.visualization.viewEnd);
-  }
-  setVisualizationQuote(visualPayload);
-  drawVisualizationPayload(visualPayload);
-}
-
-function drawEvaluationReplay() {
-  const payload = state.evaluationReplay.payload;
-  const statusElement = $('visualEvaluationStatus');
-  const events = payload?.events || [];
-  const status = payload?.status || {};
-  if (statusElement) {
-    statusElement.textContent = payload
-      ? `${payload.run_id} / ${status.status || '-'} / ${Math.round(Number(status.progress || 0) * 100)}% / ${status.message || ''}`
-      : 'Select an evaluation run.';
-  }
-  if (!payload || !events.length) {
-    drawCanvasMessage($('visualPriceCanvas'), payload ? 'No evaluation events yet.' : 'Select an evaluation run.');
-    for (let slot = 0; slot < 3; slot += 1) {
-      drawCanvasMessage($(`visualPanelCanvas${slot}`), 'No evaluation data');
-      const legend = $(`visualPanelLegend${slot}`);
-      if (legend) legend.innerHTML = '-';
-    }
-    $('visualPriceLegend').innerHTML = '-';
-    renderEvaluationStats(null);
-    return;
-  }
-  applyEvaluationVisualizationPayload(payload);
-}
-
-function drawEvaluationAxes(ctx, rows, pad, width, height, minPrice, maxPrice) {
-  ctx.strokeStyle = '#263448';
-  ctx.fillStyle = '#8ba3c7';
-  ctx.font = '11px Inter, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  for (let i = 0; i <= 4; i += 1) {
-    const ratio = i / 4;
-    const y = pad.top + (height - pad.top - pad.bottom) * ratio;
-    const value = maxPrice - (maxPrice - minPrice) * ratio;
-    ctx.beginPath();
-    ctx.moveTo(pad.left, y);
-    ctx.lineTo(width - pad.right, y);
-    ctx.stroke();
-    ctx.fillText(formatNumber(value, 2), pad.left - 8, y);
-  }
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  const labels = Math.min(6, rows.length);
-  for (let i = 0; i < labels; i += 1) {
-    const index = Math.floor((rows.length - 1) * (i / Math.max(1, labels - 1)));
-    const x = pad.left + (width - pad.left - pad.right) * (index / Math.max(1, rows.length - 1));
-    ctx.fillText(String(rows[index]?.time || '').slice(5, 10), x, height - pad.bottom + 8);
-  }
-}
-
-function renderEvaluationStats(event) {
-  const time = $('evaluationReplayTime');
-  const content = $('evaluationStatsContent');
-  if (!content || !time) return;
-  if (!event) {
-    time.textContent = '-';
-    content.innerHTML = '<div class="muted">No evaluation data.</div>';
-    return;
-  }
-  time.textContent = String(event.time || '-').slice(0, 19);
-  const fillInfo = evaluationFillInfo(event);
-  const fill = fillInfo.primary || {};
-  const execution = event.execution || {};
-  const account = event.account || {};
-  const performance = event.performance || {};
-  const bar = event.bar || {};
-  const executionStatus = execution.executed ? 'executed' : execution.blocked ? 'blocked' : '-';
-  const tradeText = fill.status
-    ? `${fill.side || event.decision?.action || '-'} ${fill.shares || 0} @ ${formatNumber(fill.price ?? fill.reference_price, 3)} (${fill.status})`
-    : '-';
-  const modelInput = event.model_input || {};
-  const features = modelInput.market_sequences || event.features || {};
-  const groupHtml = (title, rows) => `
-    <section class="visual-inspector-group">
-      <h3>${escapeHtml(title)}</h3>
-      ${rows.map(([label, value]) => `<div class="visual-inspector-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? '-')}</strong></div>`).join('')}
-    </section>
-  `;
-  const featureGroupItems = Object.entries(features).slice(0, 6)
-    .filter(([, values]) => Object.keys(values || {}).length)
-    .map(([freq, values]) => groupHtml(`${freq} Features`, Object.entries(values || {}).slice(0, 10).map(([key, value]) => [key, formatFeatureValue(value)])));
-  const decisionContextRows = Object.entries(modelInput.decision_context || {}).slice(0, 12).map(([key, value]) => [key, formatFeatureValue(value)]);
-  const runtimeStateRows = Object.entries(modelInput.runtime_state || {}).slice(0, 12).map(([key, value]) => [key, formatFeatureValue(value)]);
-  const constraintRows = Object.entries(modelInput.constraints || {}).map(([key, value]) => [key, value === true ? 'true' : value === false ? 'false' : value]);
-  if (decisionContextRows.length) featureGroupItems.push(groupHtml('Decision Context', decisionContextRows));
-  if (runtimeStateRows.length) featureGroupItems.push(groupHtml('Runtime State', runtimeStateRows));
-  if (constraintRows.length) featureGroupItems.push(groupHtml('Constraints', constraintRows));
-  const featureGroups = featureGroupItems.join('');
-  content.innerHTML = `
-    ${groupHtml('Current Bar', [
-      ['Symbol', event.symbol],
-      ['Datetime', String(event.time || bar.datetime || '-').slice(0, 19)],
-      ['Open / High', `${formatNumber(bar.open, 3)} / ${formatNumber(bar.high, 3)}`],
-      ['Low / Close', `${formatNumber(bar.low, 3)} / ${formatNumber(bar.close, 3)}`],
-      ['Volume', formatCompactNumber(bar.volume)],
-      ['Amount', formatNumber(bar.amount, 2)],
-    ])}
-    ${groupHtml('Model Decision', [
-      ['Action', evaluationActionLabel(event)],
-      ['Raw / Final', `${event.decision?.raw_action || event.decision?.action || '-'} / ${event.decision?.final_action || execution.final_action || '-'}`],
-      ['Size', formatNumber(event.decision?.size, 4)],
-      ['Prob S/H/B', `${formatPercent(event.decision?.prob_sell)} / ${formatPercent(event.decision?.prob_hold)} / ${formatPercent(event.decision?.prob_buy)}`],
-      ['Value', formatNumber(event.decision?.value, 5)],
-    ])}
-    ${groupHtml('Trade Execution', [
-      ['Status', executionStatus],
-      ['Blocked Reason', execution.blocked_reason || (fillInfo.blocked ? fillInfo.blocked.reason : '-')],
-      ['Trade', tradeText],
-      ['Shares', formatNumber(execution.shares ?? fill.shares, 0)],
-      ['Price', formatNumber(execution.price ?? fill.price ?? fill.reference_price, 3)],
-      ['Amount', formatNumber(execution.amount ?? fill.amount, 2)],
-      ['Fee', formatNumber(execution.fee ?? fill.fee, 2)],
-      ['Slippage', formatNumber(execution.slippage ?? fill.slippage, 4)],
-      ['Position Change', formatPercent(execution.position_change_ratio ?? fill.position_change_ratio)],
-    ])}
-    ${groupHtml('Account', [
-      ['Cash', formatNumber(account.cash, 2)],
-      ['Position Shares', formatNumber(account.position_shares, 0)],
-      ['Position Value', formatNumber(account.position_value, 2)],
-      ['Total Asset', formatNumber(account.total_asset, 2)],
-      ['Position Ratio', formatPercent(account.position_ratio)],
-      ['Total Fees', formatNumber(account.total_fees, 2)],
-      ['Total Trades', formatNumber(performance.total_trades ?? performance.orders, 0)],
-    ])}
-    ${groupHtml('Performance', [
-      ['Return', formatPercent(performance.return)],
-      ['Drawdown', formatPercent(performance.drawdown)],
-      ['Reward', formatNumber(performance.reward, 6)],
-      ['Total Actions', formatNumber(performance.total_actions, 0)],
-      ['Blocked Actions', formatNumber(performance.blocked_actions ?? performance.blocked_orders, 0)],
-      ['Blocked Buy / Sell', `${performance.blocked_buys ?? 0} / ${performance.blocked_sells ?? 0}`],
-    ])}
-    ${featureGroups || '<section class="visual-inspector-group"><h3>Model Input Features</h3><div class="muted">No feature snapshot.</div></section>'}
-  `;
-}
-
-function exportCheckpointButtonPayload(button) {
-  return {
-    checkpoint: button.dataset.agentExportCheckpoint || '',
-    defaultName: button.dataset.agentExportDefaultName || '',
-  };
-}
-
-function closeAgentExportConflictModal(action = 'cancel') {
-  $('agentExportConflictModal')?.classList.add('hidden');
-  if (agentExportConflictResolver) {
-    const resolve = agentExportConflictResolver;
-    agentExportConflictResolver = null;
-    resolve(action);
-  }
-}
-
-function chooseAgentExportConflictAction(modelName) {
-  const modal = $('agentExportConflictModal');
-  const message = $('agentExportConflictMessage');
-  if (!modal || !message) {
-    return Promise.resolve(window.confirm(`Evaluation model "${modelName}" already exists. Overwrite it?`) ? 'overwrite' : 'cancel');
-  }
-  message.textContent = `Evaluation model "${modelName}" already exists. Choose Rename, Overwrite, or Cancel.`;
-  modal.classList.remove('hidden');
-  return new Promise(resolve => {
-    agentExportConflictResolver = resolve;
-  });
-}
-
-async function exportAgentCheckpoint(button) {
-  const payload = exportCheckpointButtonPayload(button);
-  if (!state.agentSelectedManageRun || !payload.checkpoint) return;
-  let modelName = prompt('Export model name', payload.defaultName || 'agent_model');
-  if (!modelName) return;
-  async function submit(overwrite = false) {
-    return apiPost(`/api/agent/runs/${encodeURIComponent(state.agentSelectedManageRun)}/export-model`, {
-      checkpoint: payload.checkpoint,
-      model_name: modelName,
-      overwrite,
-    });
-  }
-  try {
-    await submit(false);
-    alert(`Model exported: ${modelName}`);
-    await loadEvaluationModels();
-  } catch (err) {
-    if (String(err.message || '').includes('already exists')) {
-      const action = await chooseAgentExportConflictAction(modelName);
-      if (action === 'overwrite') {
-        await submit(true);
-        alert(`Model overwritten: ${modelName}`);
-      } else if (action === 'rename') {
-        const renamed = prompt('New model name', `${modelName}_v2`);
-        if (!renamed) return;
-        modelName = renamed;
-        await submit(false);
-        alert(`Model exported: ${modelName}`);
-      } else {
-        return;
-      }
-      await loadEvaluationModels();
-    } else {
-      alert(`Export failed: ${err.message}`);
-    }
-  }
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function setDownloadSymbolsPath(path) {
   const value = (path || DEFAULT_DOWNLOAD_SYMBOLS_FILE).trim();
@@ -6077,7 +4319,7 @@ function handleFeatureDatasetAction(event) {
 function bindEvents() {
   document.addEventListener('click', handleFeatureDatasetAction);
   document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => showSection(btn.dataset.section)));
-  document.querySelectorAll('.visual-tab').forEach(btn => btn.addEventListener('click', () => showVisualTab(btn.dataset.visualTab || 'market')));
+  
   $('refreshVisualizationBtn').addEventListener('click', refreshInventory);
   $('visualDbPath').addEventListener('change', () => {
     setSharedDbPath($('visualDbPath').value);
@@ -6190,10 +4432,7 @@ function bindEvents() {
   window.addEventListener('pointerup', endVisualizationDrag);
   window.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
-    if (!$('agentExportConflictModal')?.classList.contains('hidden')) {
-      closeAgentExportConflictModal('cancel');
-      return;
-    }
+    
     $('visualIndicatorMenu').classList.add('hidden');
     clearVisualizationReferenceGuide();
   });
@@ -6242,115 +4481,44 @@ function bindEvents() {
   $('importBundleBtn').addEventListener('click', importBundle);
   $('inspectBundleBtn').addEventListener('click', inspectBundle);
   $('stopBundleBtn').addEventListener('click', stopBundleJob);
-  $('buildAgentCacheBtn').addEventListener('click', buildAgentCache);
-  if ($('stopAgentCacheBtn')) $('stopAgentCacheBtn').addEventListener('click', stopAgentCacheBuild);
-  $('inspectAgentCacheBtn').addEventListener('click', inspectAgentCache);
-  $('useAgentCachePathBtn').addEventListener('click', useAgentCachePathForTraining);
-  $('agentPreflightBtn').addEventListener('click', preflightAgent);
-  $('startAgentTrainingBtn').addEventListener('click', startAgentTraining);
-  $('stopAgentTrainingBtn').addEventListener('click', stopAgentTraining);
-  $('pauseAgentRunBtn').addEventListener('click', () => controlAgentRun('pause'));
-  $('resumeAgentRunBtn').addEventListener('click', () => controlAgentRun('resume'));
-  $('checkpointAgentRunBtn').addEventListener('click', () => controlAgentRun('checkpoint'));
-  $('refreshAgentRunsBtn').addEventListener('click', loadAgentRuns);
-  $('agentPopoutBtn').addEventListener('click', openAgentMonitorWindow);
-  readAgentChartGroupPrefs();
-  applyAgentChartGroupState();
-  document.querySelectorAll('[data-agent-toggle-group]').forEach(button => {
-    button.addEventListener('click', () => {
-      const group = button.dataset.agentToggleGroup;
-      state.agentChartGroupsCollapsed[group] = !state.agentChartGroupsCollapsed[group];
-      persistAgentChartGroupPrefs();
-      applyAgentChartGroupState();
-      drawAllAgentCharts();
-    });
-  });
-  document.querySelectorAll('.agent-metric-chart').forEach(canvas => {
-    canvas.addEventListener('pointermove', event => {
-      const layout = canvas.__agentChartLayout;
-      if (!layout || !layout.rowsCount) return;
-      const rect = canvas.getBoundingClientRect();
-      const localX = event.clientX - rect.left;
-      let index = 0;
-      if (Array.isArray(layout.pointXs) && layout.pointXs.length) {
-        let bestDistance = Infinity;
-        layout.pointXs.forEach((pointX, pointIndex) => {
-          const distance = Math.abs(pointX - localX);
-          if (distance < bestDistance) {
-            bestDistance = distance;
-            index = pointIndex;
-          }
-        });
-      } else {
-        const ratio = Math.max(0, Math.min(1, (localX - layout.pad.left) / Math.max(1, layout.plotW)));
-        index = Math.round(ratio * Math.max(0, layout.rowsCount - 1));
-      }
-      state.agentChartHover[canvas.dataset.agentChartId || canvas.id] = { index };
-      drawAllAgentCharts();
-    });
-    canvas.addEventListener('pointerleave', () => {
-      delete state.agentChartHover[canvas.dataset.agentChartId || canvas.id];
-      drawAllAgentCharts();
-    });
-  });
-  document.addEventListener('click', event => {
-    const legend = event.target.closest('[data-agent-legend-key]');
-    if (!legend) return;
-    const key = legend.dataset.agentLegendKey;
-    state.agentChartHidden[key] = !state.agentChartHidden[key];
-    drawAllAgentCharts();
-  });
-  $('closeAgentCheckpointModalBtn')?.addEventListener('click', closeAgentRunManageModal);
-  $('agentCheckpointModalBackdrop')?.addEventListener('click', closeAgentRunManageModal);
-  $('agentCheckpointModalTableBody')?.addEventListener('click', event => {
-    const button = event.target.closest('[data-agent-export-checkpoint]');
-    if (button) exportAgentCheckpoint(button);
-  });
-  $('agentExportRenameBtn')?.addEventListener('click', () => closeAgentExportConflictModal('rename'));
-  $('agentExportOverwriteBtn')?.addEventListener('click', () => closeAgentExportConflictModal('overwrite'));
-  $('agentExportCancelBtn')?.addEventListener('click', () => closeAgentExportConflictModal('cancel'));
-  $('agentExportConflictBackdrop')?.addEventListener('click', () => closeAgentExportConflictModal('cancel'));
-  $('agentProfile').addEventListener('change', () => applyAgentProfile($('agentProfile').value));
-  document.querySelectorAll('.agentFrequency').forEach(input => input.addEventListener('change', renderAgentContract));
-  document.querySelectorAll('.agent-tab').forEach(button => {
-    button.addEventListener('click', () => showAgentTab(button.dataset.agentTab || 'setup'));
-  });
-  $('agentRunsTableBody').addEventListener('click', event => {
-    const view = event.target.closest('[data-agent-view-run]');
-    const manage = event.target.closest('[data-agent-manage-run]');
-    const resume = event.target.closest('[data-agent-resume-run]');
-    if (view) viewAgentRun(view.dataset.agentViewRun);
-    if (manage) openAgentRunManage(manage.dataset.agentManageRun);
-    if (resume) {
-      state.agentRunId = resume.dataset.agentResumeRun;
-      controlAgentRun('resume');
-      showAgentTab('monitor');
-    }
-  });
-  $('refreshEvaluationModelsBtn')?.addEventListener('click', loadEvaluationModels);
-  $('startEvaluationBtn')?.addEventListener('click', startEvaluation);
-  $('stopEvaluationBtn')?.addEventListener('click', () => stopEvaluation());
-  $('refreshEvaluationRunsBtn')?.addEventListener('click', () => loadEvaluationRuns());
-  $('refreshVisualEvaluationRunsBtn')?.addEventListener('click', () => loadEvaluationRuns());
-  $('refreshVisualEvaluationReplayBtn')?.addEventListener('click', () => loadEvaluationReplay());
-  $('stopVisualEvaluationBtn')?.addEventListener('click', () => stopEvaluation());
-  $('visualEvaluationRunSelect')?.addEventListener('change', event => {
-    setVisualEvaluationRun(event.target.value);
-    loadEvaluationReplay(event.target.value);
-  });
-  $('evaluationRunsTableBody')?.addEventListener('click', event => {
-    const stop = event.target.closest('[data-evaluation-stop-run]');
-    if (stop) {
-      stopEvaluation(stop.dataset.evaluationStopRun);
-      return;
-    }
-    const view = event.target.closest('[data-evaluation-view-run]');
-    if (!view) return;
-    showSection('visualization');
-    showVisualTab('evaluation');
-    setVisualEvaluationRun(view.dataset.evaluationViewRun);
-    loadEvaluationReplay(view.dataset.evaluationViewRun);
-  });
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   $('addFeatureIndicatorBtn').addEventListener('click', addFeatureIndicator);
   $('saveFeatureIndicatorsBtn').addEventListener('click', saveFeatureIndicators);
   $('featureIndicatorEditor').addEventListener('click', event => {
@@ -6488,20 +4656,21 @@ window.addEventListener('DOMContentLoaded', async () => {
   await loadFeatureSpec();
   await loadFeatureIndicators();
   await loadModelInputBlueprint();
-  await loadAgentSpec();
-  await loadEvaluationModels();
-  await loadEvaluationRuns({ silent: true });
+  
+  
+  
   await loadConfigSymbolsFromFile({ silent: true });
   await refreshInventory();
   await resumeActiveDownloadJob();
   applyLanguage(currentLanguage());
-  const query = new URLSearchParams(window.location.search);
-  if (query.get('section') === 'agent') showSection('agent');
-  if (query.get('section') === 'evaluation') showSection('evaluation');
-  if (query.get('section') === 'live') showSection('live');
-  if (query.get('agentTab')) showAgentTab(query.get('agentTab'));
-  if (query.get('run')) viewAgentRun(query.get('run'));
-  if (query.get('evaluationRun')) { showSection('visualization'); showVisualTab('evaluation'); setVisualEvaluationRun(query.get('evaluationRun')); loadEvaluationReplay(query.get('evaluationRun')); }
+  const requestedSection = new URLSearchParams(window.location.search).get('section');
+  if (['visualization', 'download', 'data', 'feature', 'config'].includes(requestedSection)) showSection(requestedSection);
+  
+  
+  
+  
+  
+  
 });
 
 window.addEventListener('beforeunload', event => {
@@ -6511,9 +4680,5 @@ window.addEventListener('beforeunload', event => {
 });
 
 window.addEventListener('resize', () => {
-  if ($('visualization')?.classList.contains('active')) {
-    if (state.evaluationReplay.activeTab === 'evaluation') drawEvaluationReplay();
-    else drawVisualizationPayload(state.visualization.payload);
-  }
-  drawAllAgentCharts();
+  if ($('visualization')?.classList.contains('active')) drawVisualizationPayload(state.visualization.payload);
 });

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PocketAgent · 策略研究</title><link rel="stylesheet" href="research.css"></head>
+<body>
+  <header><a class="brand" href="/">PocketAgent <span>策略研究</span></a><nav><span class="badge">CPU 工作台</span><a href="triple.html">三重滤网 ↗</a><a href="index.html">数据与原有工作台 ↗</a></nav></header>
+  <main>
+    <div class="intro"><div><p class="eyebrow">RESEARCH / DAILY BACKTEST</p><h1>让交易想法接受检验</h1><p>统一账户、成交规则与成本，对照策略、买入持有和现金的表现。</p></div><div class="scope">日线 · 独立单股账户<br><span>收盘信号 → 下一交易日开盘</span></div></div>
+    <div class="workspace">
+      <section class="panel setup"><h2>设置实验</h2><form id="researchForm">
+        <label>研究方式<select id="researchMode"><option value="single">单次回测</option><option value="batch">批量参数挖掘</option><option value="walk_forward">滚动验证</option><option value="screen">向量化粗筛</option><option value="universe">逐股票对照</option><option value="portfolio">共享现金组合</option></select></label>
+        <label>数据来源<select id="sourceType"><option value="demo">演示数据 · 合成行情</option><option value="market">本地行情数据库</option><option value="csv">本地 CSV 文件</option></select></label>
+        <p id="sourceHelp" class="hint">用于检查流程，结果不代表真实市场表现。</p>
+        <label id="sourcePathField" hidden>数据路径<input id="sourcePath" placeholder="已有文件或行情目录的本地路径"></label>
+        <label id="symbolsField" hidden>股票列表<input id="symbols" placeholder="000001.SZ, 600000.SH"></label>
+        <label id="symbolField" hidden>股票代码<input id="symbol" placeholder="000001.SZ"></label>
+        <div class="row"><label>开始日期<input id="startDate" type="date"></label><label>结束日期<input id="endDate" type="date"></label></div>
+        <label>研究策略<select id="strategy"></select></label><p id="strategyHelp" class="hint"></p><div id="parameters" class="row"></div>
+        <p id="gridHelp" class="hint" hidden>每个参数可填写多个值，以逗号分隔。所有组合与失败尝试都会登记，默认串行执行。</p>
+        <fieldset id="walkForwardFields" hidden><legend>时间窗口</legend><div class="row"><label>训练窗口（日线数）<input id="trainBars" type="number" min="2" step="1" value="40"></label><label>验证窗口（日线数）<input id="validationBars" type="number" min="2" step="1" value="15"></label><label>隔离日线数<input id="gapBars" type="number" min="0" step="1" value="1"></label><label>最终保留日线数<input id="holdoutBars" type="number" min="2" step="1" value="15"></label></div><label class="check-label"><input id="expandingWindow" type="checkbox">逐折扩展训练窗口</label><label class="check-label"><input id="evaluateHoldout" type="checkbox">本次评估冻结参数的最终测试段</label><p class="hint">默认保留最终测试段，不查看其收益。窗口按所选数据的日线条数计算，每折只用过去数据选参，验证账户独立重置。</p></fieldset>
+        <fieldset id="portfolioFields" hidden><legend>组合设置</legend><div class="row"><label>最大持仓数<input id="portfolioMaxPositions" type="number" min="1" value="5"></label><label>动量回看日线<input id="portfolioLookback" type="number" min="2" value="20"></label><label>调仓间隔日线<input id="portfolioRebalance" type="number" min="1" value="5"></label><label>单股最大权重<input id="portfolioMaxWeight" type="number" min="0.01" max="1" step="0.01" value="0.3"></label></div><p class="hint">共享一笔现金，先卖后买；缺 bar 的持仓使用最后已知价格并标记 stale。</p></fieldset>
+        <div id="experimentBudget" class="budget" hidden>默认串行 · 最多 64 组参数 / 512 次回测</div>
+        <div class="row"><label>初始资金<input id="initialCash" type="number" min="1" value="1000000" required></label><label>最大仓位比例<input id="maxPosition" type="number" min="0.01" max="1" step="0.01" value="1" required></label></div>
+        <details><summary>交易成本与约束</summary><div class="row"><label>佣金比例<input id="commission" type="number" min="0" step="0.0001" value="0.0003"></label><label>最低佣金<input id="minimumCommission" type="number" min="0" step="0.1" value="5"></label><label>基础滑点比例<input id="slippage" type="number" min="0" step="0.0001" value="0.0002"></label><label>每手股数<input id="lotSize" type="number" min="1" step="1" value="100"></label></div><p class="hint">比例以小数填写，0.0003 = 0.03%。完整执行配置与假设会随实验保存。</p></details>
+        <button type="submit" id="runButton">运行策略与对照</button><button type="button" id="cancelRun" class="secondary" hidden>完成当前步骤后取消</button><div id="runStatus" role="status" aria-live="polite">准备就绪</div>
+      </form></section>
+      <div class="results">
+        <section class="panel"><div class="section-title"><h2>实验结果</h2><span id="resultBadge" class="badge subtle">尚未运行</span></div>
+          <div id="emptyResult" class="empty"><div class="empty-icon">↗</div><h3>从一个可解释的策略开始</h3><p>先运行演示数据检查流程，再选择你的本地行情。<br>每次实验都会保存配置、成交和净值记录。</p></div>
+          <div id="analysisOverview" hidden><p id="analysisExplanation" class="notice"></p><div id="analysisSummary" class="metrics"></div><div class="table-wrap bounded-table"><table><thead id="analysisHead"></thead><tbody id="analysisRows"></tbody></table></div><p id="holdoutStatus" class="notice" hidden></p></div>
+          <div id="resultContent" hidden><p id="reportContext" class="report-context"></p><div id="metrics" class="metrics"></div><h3 class="small-heading">当前查看区间的账户净值</h3><div id="chart" role="img" aria-label="策略与对照净值曲线"></div><div class="legend"><span><i class="strategy-color"></i>研究策略</span><span><i class="hold-color"></i>买入持有</span><span><i class="cash-color"></i>现金</span></div><div class="table-wrap"><table><thead><tr><th>策略</th><th>总收益</th><th>最大回撤</th><th>费用</th><th>成交数</th></tr></thead><tbody id="comparison"></tbody></table></div><details><summary>执行假设与结果位置</summary><ul id="assumptions"></ul><p id="resultPath" class="path"></p></details></div>
+        </section>
+        <section class="panel"><div class="section-title"><h2>最近实验</h2><button id="refreshRuns" class="secondary" type="button">刷新</button></div><div class="table-wrap"><table><thead><tr><th>创建时间</th><th>数据 / 方式</th><th>策略</th><th>状态</th><th></th></tr></thead><tbody id="runs"><tr><td colspan="5" class="muted">正在读取…</td></tr></tbody></table></div></section>
+      </div>
+    </div>
+    <section class="panel trades" id="fifoPanel" hidden><div class="section-title"><h2>FIFO 成交报告</h2><span class="badge subtle">当前查看策略 / 区间</span></div><p class="hint">按先进先出匹配买卖，计入分摊费用。匹配片段、卖单与完整开平仓分别统计；未平仓不计入已实现胜率。</p><div id="fifoMetrics" class="metrics"></div><div class="table-wrap bounded-table"><table><thead><tr><th>买入时间</th><th>卖出时间</th><th>股数</th><th>买入价</th><th>卖出价</th><th>分摊费用</th><th>净盈亏</th><th>持有天数</th></tr></thead><tbody id="fifoClosed"></tbody></table></div><details><summary>期末未平仓批次</summary><div class="table-wrap"><table><thead><tr><th>买入时间</th><th>剩余股数</th><th>买入价</th><th>未分摊买入费用</th><th>未实现盈亏</th></tr></thead><tbody id="fifoOpen"></tbody></table></div></details><p id="fifoDefinition" class="hint"></p></section>
+    <section class="panel trades" id="tradesPanel" hidden><h2>成交与拒单记录</h2><div class="table-wrap"><table><thead><tr><th>时间</th><th>方向</th><th>股数</th><th>价格</th><th>状态</th><th>原因</th></tr></thead><tbody id="fills"></tbody></table></div></section>
+  </main><footer>研究结果用于检验假设。演示数据为合成行情；逐股结果不等于共享资金组合表现。</footer><script src="research.js"></script>
+</body></html>

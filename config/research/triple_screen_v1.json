@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "mode": "triple_screen",
+  "source_type": "market",
+  "source_path": "runtime_layer/data",
+  "adjust": "pre",
+  "symbol": "000001.SZ",
+  "start": "2022-01-04",
+  "end": "2024-12-31",
+  "settings": {
+    "version": "triple_screen_pre_v1",
+    "macd_fast": 12,
+    "macd_slow": 26,
+    "macd_signal": 9,
+    "force_span": 2,
+    "warmup_weeks": 100,
+    "cost_bps": 0.0
+  },
+  "research_scope": "exploratory",
+  "cost_scenarios_bps": [0, 5, 10, 20],
+  "notes": "Fixed-rule technical study. Previously inspected history is not an untouched holdout."
+}

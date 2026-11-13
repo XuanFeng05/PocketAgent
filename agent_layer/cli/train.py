@@ -25,7 +25,11 @@ def main() -> int:
         help="Validated Feature Parts Dataset.",
     )
     parser.add_argument("--symbols-file", default=None, help="Optional fixed Agent universe file.")
-    parser.add_argument("--fold", type=int, default=3, help="Walk-forward fold to train and validate.")
+    parser.add_argument("--fold", type=int, default=1, help="Walk-forward fold to train and validate.")
+    parser.add_argument("--split-validation-days", type=int, default=20)
+    parser.add_argument("--split-test-days", type=int, default=20)
+    parser.add_argument("--split-embargo-days", type=int, default=5)
+    parser.add_argument("--split-folds", type=int, default=1)
     parser.add_argument("--total-steps", type=int, default=5_000_000)
     parser.add_argument("--episode-days", type=int, default=252)
     parser.add_argument("--seed", type=int, default=42)
@@ -41,7 +45,13 @@ def main() -> int:
     universe = _read_symbols(Path(args.symbols_file)) if args.symbols_file else None
     loader = open_agent_timeline_loader(args.store, universe=universe)
     dates = loader.trading_dates()
-    splits = build_walk_forward_splits(dates)
+    splits = build_walk_forward_splits(
+        dates,
+        validation_days=args.split_validation_days,
+        test_days=args.split_test_days,
+        embargo_days=args.split_embargo_days,
+        folds=args.split_folds,
+    )
     if not 1 <= args.fold <= len(splits.folds):
         raise ValueError(f"Fold must be between 1 and {len(splits.folds)}.")
     fold = splits.folds[args.fold - 1]
@@ -91,6 +101,7 @@ def main() -> int:
                     start=train_dates[start_index],
                     end=train_dates[start_index + episode_days - 1],
                     execution_config=ExecutionConfig(),
+                    enforce_action_contract=True,
                 )
             except ValueError as exc:
                 last_error = exc
@@ -115,6 +126,7 @@ def main() -> int:
         start=fold.validation.start,
         end=fold.validation.end,
         execution_config=ExecutionConfig(),
+        enforce_action_contract=True,
     )
     validation = evaluate_policy(
         validation_environment,

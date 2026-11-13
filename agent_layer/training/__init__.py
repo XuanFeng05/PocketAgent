@@ -15,6 +15,7 @@ from agent_layer.training.trainer import (
     TrainingSummary,
     TrainingUpdateMetrics,
 )
+from agent_layer.training.distributed import DistributedTrainingContext
 
 PPOTrainer = MAPPOTrainer
 
@@ -22,6 +23,7 @@ __all__ = [
     "MAPPOConfig",
     "MAPPOLoss",
     "MAPPOTrainer",
+    "DistributedTrainingContext",
     "PPOConfig",
     "PPOLoss",
     "PPOTrainer",

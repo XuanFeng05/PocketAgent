@@ -20,7 +20,7 @@ from app_layer.backend.data_controller import (
     symbol_detail,
     write_symbol_file,
 )
-from app_layer.backend.agent_controller import (
+from app_layer.backend.optional_agent import (
     agent_preflight,
     agent_run_action,
     agent_run_detail,
@@ -56,6 +56,9 @@ from app_layer.backend.feature_controller import (
     validate_feature_model_input_blueprint,
 )
 from app_layer.backend.jobs import JobManager
+from app_layer.backend.optional_agent import OptionalTrainingUnavailable
+from app_layer.backend.research_controller import ResearchService
+from app_layer.backend.triple_controller import TripleDashboardService
 from app_layer.backend.json_utils import dumps_json
 from app_layer.backend.visualization_controller import kline_chart_payload
 
@@ -66,8 +69,11 @@ DEFAULT_DB_PATH = "runtime_layer/data"
 
 
 class DashboardServer:
-    def __init__(self) -> None:
+    def __init__(self, *, research_root: str | Path | None = None) -> None:
         self.jobs = JobManager(max_workers=2)
+        self.research = ResearchService(self.jobs, output_root=research_root)
+        triple_root = (Path(research_root).resolve() / "triple_dashboard") if research_root else None
+        self.triple = TripleDashboardService(self.jobs, output_root=triple_root)
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -106,7 +112,48 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         try:
             if path == "/api/health":
-                self._send_json({"ok": True, "app": "PocketAgent", "status": "running"})
+                self._send_json({"ok": True, "app": "PocketAgent", "status": "running", "mode": "cpu_research"})
+                return
+
+            if path == "/api/research/spec":
+                self._send_json({"ok": True, "data": self.app.research.spec()})
+                return
+
+            if path == "/api/triple/spec":
+                self._send_json({"ok": True, "data": self.app.triple.spec()})
+                return
+
+            if path == "/api/triple/runs":
+                self._send_json({"ok": True, "data": self.app.triple.list_runs()})
+                return
+
+            if path.startswith("/api/triple/runs/"):
+                parts = path.strip("/").split("/")
+                if len(parts) == 5 and parts[4] == "report":
+                    report = self.app.triple.report(parts[3]).read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(report)))
+                    self.end_headers()
+                    self.wfile.write(report)
+                    return
+                if len(parts) != 4:
+                    raise ValueError("Invalid Triple Screen result path")
+                self._send_json({"ok": True, "data": self.app.triple.detail(parts[3])})
+                return
+
+            if path == "/api/research/runs":
+                self._send_json({"ok": True, "data": self.app.research.list_runs()})
+                return
+
+            if path.startswith("/api/research/runs/"):
+                parts = path.strip("/").split("/")
+                if len(parts) == 6 and parts[4] == "trials":
+                    self._send_json({"ok": True, "data": self.app.research.trial_report(parts[3], parts[5])})
+                elif len(parts) == 4:
+                    self._send_json({"ok": True, "data": self.app.research.detail(parts[3])})
+                else:
+                    raise ValueError("Invalid research result path")
                 return
 
             if path == "/api/download/catalog":
@@ -253,6 +300,10 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             self._serve_static(path)
 
+        except OptionalTrainingUnavailable as exc:
+            self._send_error_json(str(exc), status=503)
+        except (ValueError, FileNotFoundError) as exc:
+            self._send_error_json(str(exc), status=400)
         except Exception as exc:
             self._send_error_json(str(exc), status=500)
 
@@ -262,6 +313,44 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         try:
             payload = self._read_json()
+
+            if path == "/api/research/start":
+                self._send_json({"ok": True, "data": self.app.research.start(payload)}, status=202)
+                return
+
+            if path == "/api/triple/start":
+                self._send_json({"ok": True, "data": self.app.triple.start(payload)}, status=202)
+                return
+
+            if path.startswith("/api/triple/runs/") and path.endswith("/cancel"):
+                parts = path.strip("/").split("/")
+                if len(parts) != 5:
+                    raise ValueError("Invalid Triple Screen cancellation path")
+                self._send_json({"ok": True, "data": self.app.triple.cancel(parts[3])})
+                return
+
+            if path == "/api/research/preview":
+                self._send_json({"ok": True, "data": self.app.research.preview(payload)})
+                return
+
+            if path == "/api/research/offline/prepare":
+                self._send_json({"ok": True, "data": self.app.research.prepare_offline(payload)})
+                return
+
+            if path == "/api/research/offline/aggregate":
+                self._send_json({"ok": True, "data": self.app.research.aggregate_offline(payload)})
+                return
+
+            if path == "/api/research/resume":
+                self._send_json({"ok": True, "data": self.app.research.resume(payload)})
+                return
+
+            if path.startswith("/api/research/runs/") and path.endswith("/cancel"):
+                parts = path.strip("/").split("/")
+                if len(parts) != 5:
+                    raise ValueError("Invalid research cancellation path")
+                self._send_json({"ok": True, "data": self.app.research.cancel(parts[3])})
+                return
 
             if path == "/api/download/start":
                 self._send_json({"ok": True, "data": start_download_job(payload, self.app.jobs)})
@@ -379,17 +468,21 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             self._send_error_json(f"Unknown endpoint: {path}", status=404)
 
+        except OptionalTrainingUnavailable as exc:
+            self._send_error_json(str(exc), status=503)
+        except (ValueError, FileNotFoundError) as exc:
+            self._send_error_json(str(exc), status=400)
         except Exception as exc:
             self._send_error_json(str(exc), status=500)
 
     def _serve_static(self, path: str) -> None:
         if path == "/":
-            path = "/index.html"
+            path = "/research.html"
 
         relative = path.lstrip("/")
         file_path = (FRONTEND_DIR / relative).resolve()
 
-        if not str(file_path).startswith(str(FRONTEND_DIR.resolve())):
+        if not file_path.is_relative_to(FRONTEND_DIR.resolve()):
             self.send_error(403)
             return
 

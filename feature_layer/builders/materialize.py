@@ -14,7 +14,7 @@ from data_layer.storage.duckdb_storage import (
     connect_duckdb,
     init_duckdb,
 )
-from feature_layer.builders.aggregation import normalize_frequency
+from feature_layer.builders.aggregation import INTRADAY_MINUTES, intraday_session_buckets, normalize_frequency
 
 
 DERIVED_TARGETS_BY_BASE: dict[str, tuple[str, ...]] = {
@@ -25,7 +25,7 @@ DERIVED_TARGETS_BY_BASE: dict[str, tuple[str, ...]] = {
 DEFAULT_DERIVED_TARGETS: tuple[str, ...] = DERIVED_TARGETS_BY_BASE["5min"]
 DERIVED_MANIFEST_TABLE_NAME = DERIVED_BAR_MANIFEST_TABLE_NAME
 DERIVED_SHARD_MANIFEST_NAME = "derived_bars_manifest.json"
-DERIVED_SHARD_RULE_VERSION = "derived_shards_v1"
+DERIVED_SHARD_RULE_VERSION = "derived_session_clock_v2"
 
 
 def list_base_symbols(
@@ -804,6 +804,19 @@ def _timestamp_text(value: object | None) -> str:
     return str(timestamp)[:19]
 
 
+def _intraday_bucket_sql(column: str, *, base_freq: str, target_freq: str) -> str:
+    """SQL equivalent of intraday_session_buckets for completed bar ends."""
+    base_minutes = INTRADAY_MINUTES[base_freq]
+    target_minutes = INTRADAY_MINUTES[target_freq]
+    minutes = f"(EXTRACT(hour FROM {column}) * 60 + EXTRACT(minute FROM {column}))"
+    morning = f"({minutes} > 570 AND {minutes} <= 690)"
+    afternoon = f"({minutes} > 780 AND {minutes} <= 900)"
+    elapsed = f"(CASE WHEN {morning} THEN {minutes} - 570 ELSE {minutes} - 780 END)"
+    valid = f"(({morning} OR {afternoon}) AND {elapsed} % {base_minutes} = 0 AND {column} = DATE_TRUNC('minute', {column}))"
+    bucket = f"(FLOOR(({elapsed} - 1) / {target_minutes}) + CASE WHEN {afternoon} THEN {120 // target_minutes} ELSE 0 END)"
+    return f"CASE WHEN {valid} THEN {bucket} ELSE error('Intraday bars are outside the trading-session grid') END"
+
+
 def _aggregate_derived_frame(
     base_df: pd.DataFrame,
     *,
@@ -828,8 +841,8 @@ def _aggregate_derived_frame(
 
     if base_freq in {"5min", "30min"}:
         df["_period_key"] = df["datetime"].dt.normalize()
-        df["_period_bucket"] = (
-            df.groupby(["symbol", "adjust", "_period_key"], dropna=False).cumcount() // expected_rows
+        df["_period_bucket"] = intraday_session_buckets(
+            df["datetime"], target_minutes=INTRADAY_MINUTES[target_freq], base_minutes=INTRADAY_MINUTES[base_freq],
         )
     elif target_freq == "weekly":
         df["_period_key"] = df["datetime"].dt.normalize() - pd.to_timedelta(df["datetime"].dt.weekday, unit="D")
@@ -945,40 +958,14 @@ def _materialize_target_in_duckdb(
             adjust=adjust,
             source=source,
         )
-        missing_manifest_symbols = [symbol for symbol in base_stats if symbol not in manifests]
-        expected_coverage = (
-            _expected_target_coverage(
-                conn,
-                symbols=missing_manifest_symbols,
-                base_freq=base_freq,
-                target_freq=target_freq,
-                adjust=adjust,
-                expected_rows=expected_rows,
-            )
-            if missing_manifest_symbols
-            else {}
-        )
-        bootstrap_rows: list[dict[str, object]] = []
         append_candidates: list[str] = []
         for symbol, current in base_stats.items():
             manifest = manifests.get(symbol)
             target = target_stats.get(symbol)
             if manifest is None:
-                if _coverage_matches(target, expected_coverage.get(symbol)):
-                    skipped_symbols.add(symbol)
-                    bootstrap_rows.append(
-                        _manifest_row(
-                            symbol=symbol,
-                            base_freq=base_freq,
-                            target_freq=target_freq,
-                            adjust=adjust,
-                            source=source,
-                            base=current,
-                            target_rows=int(target["rows"]),
-                        )
-                    )
-                else:
-                    plans[symbol] = {"rebuild_start": None, "full_rebuild": True}
+                # Matching counts cannot prove which aggregation rule produced
+                # old rows. Rebuild when no current-version manifest exists.
+                plans[symbol] = {"rebuild_start": None, "full_rebuild": True}
                 continue
 
             target_is_intact = bool(
@@ -1032,15 +1019,6 @@ def _materialize_target_in_duckdb(
             else:
                 plans[symbol] = {"rebuild_start": None, "full_rebuild": True}
 
-        if bootstrap_rows:
-            conn.execute("BEGIN TRANSACTION")
-            try:
-                _replace_manifest_rows(conn, bootstrap_rows)
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-
     if not plans:
         stage_callback(f"Up to date ({len(skipped_symbols)} symbols skipped)", 0.96)
         return base_counts, {}, 0, False, skipped_symbols
@@ -1048,11 +1026,7 @@ def _materialize_target_in_duckdb(
     _register_materialize_plan(conn, plans)
     if base_freq in {"5min", "30min"}:
         period_sql = "CAST(bars.datetime AS DATE)"
-        bucket_sql = (
-            "FLOOR((ROW_NUMBER() OVER ("
-            "PARTITION BY bars.symbol, bars.adjust, CAST(bars.datetime AS DATE) ORDER BY bars.datetime"
-            f") - 1) / {expected_rows})"
-        )
+        bucket_sql = _intraday_bucket_sql("bars.datetime", base_freq=base_freq, target_freq=target_freq)
     else:
         period_sql = (
             "DATE_TRUNC('week', bars.datetime)"
@@ -1246,6 +1220,9 @@ def _ensure_derived_manifest(conn: Any) -> None:
         )
         """
     )
+    conn.execute(
+        f"ALTER TABLE {DERIVED_MANIFEST_TABLE_NAME} ADD COLUMN IF NOT EXISTS rule_version VARCHAR"
+    )
 
 
 def _base_slice_stats(
@@ -1319,10 +1296,10 @@ def _load_derived_manifests(
         f"""
         SELECT symbol, base_start, base_end, base_rows, base_hash, target_rows
         FROM {DERIVED_MANIFEST_TABLE_NAME}
-        WHERE base_freq = ? AND target_freq = ? AND adjust = ?
+        WHERE base_freq = ? AND target_freq = ? AND adjust = ? AND rule_version = ?
           AND symbol IN ({placeholders})
         """,
-        [base_freq, target_freq, adjust, *symbols],
+        [base_freq, target_freq, adjust, DERIVED_SHARD_RULE_VERSION, *symbols],
     ).fetchall()
     return {
         str(symbol): {
@@ -1350,10 +1327,7 @@ def _expected_target_coverage(
     placeholders = ", ".join(["?"] * len(symbols))
     if base_freq in {"5min", "30min"}:
         period_sql = "CAST(datetime AS DATE)"
-        bucket_sql = (
-            "FLOOR((ROW_NUMBER() OVER (PARTITION BY symbol, CAST(datetime AS DATE) "
-            f"ORDER BY datetime) - 1) / {expected_rows})"
-        )
+        bucket_sql = _intraday_bucket_sql("datetime", base_freq=base_freq, target_freq=target_freq)
     else:
         period_sql = "DATE_TRUNC('week', datetime)" if target_freq == "weekly" else "DATE_TRUNC('month', datetime)"
         bucket_sql = "0"
@@ -1452,12 +1426,13 @@ def _replace_manifest_rows(conn: Any, rows: list[dict[str, object]]) -> None:
             f"""
             INSERT INTO {DERIVED_MANIFEST_TABLE_NAME} (
                 symbol, base_freq, target_freq, adjust, source,
-                base_start, base_end, base_rows, base_hash, target_rows, generated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                base_start, base_end, base_rows, base_hash, target_rows, generated_at, rule_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
             """,
             [
                 item["symbol"], item["base_freq"], item["target_freq"], item["adjust"], item["source"],
                 item["base_start"], item["base_end"], item["base_rows"], item["base_hash"], item["target_rows"],
+                DERIVED_SHARD_RULE_VERSION,
             ],
         )
 

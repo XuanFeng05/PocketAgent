@@ -8,8 +8,8 @@ from pathlib import Path
 import time
 from typing import Any
 
-from agent_layer.environment import ExecutionConfig
-from evaluation_layer.backtest.runner import run_policy_replay_to_files
+from backtest_layer.execution import ExecutionConfig
+from app_layer.backend.optional_agent import OptionalTrainingUnavailable
 
 from app_layer.backend.data_controller import _relative_or_absolute, resolve_project_path
 from app_layer.backend.jobs import JobManager
@@ -94,6 +94,7 @@ def evaluation_run_events(run_id: str, *, after: int = 0, limit: int = 2000) -> 
 
 
 def start_evaluation_run(payload: dict[str, Any], jobs: JobManager) -> dict[str, Any]:
+    _legacy_replay_runner()
     config = _evaluation_config(payload)
     run_id = _new_evaluation_run_id(config['symbol'])
     run_dir = resolve_project_path(DEFAULT_EVALUATION_RUN_DIR) / run_id
@@ -213,14 +214,14 @@ def _run_evaluation_job(job_id: str, run_id: str, run_dir: Path, config: dict[st
             "created_at": config["created_at"],
             "updated_at": _now(),
         })
-        summary = run_policy_replay_to_files(
+        summary = _legacy_replay_runner()(
             run_dir=run_dir,
             model_path=resolve_project_path(config["model_path"]),
             dataset_dir=resolve_project_path(config["feature_dataset_dir"]),
             symbol=config["symbol"],
             start=config["start"],
             end=config["end"],
-            execution_config=_execution_config(config),
+            execution_overrides=config.get("execution_overrides", config.get("execution", {})),
             device=config.get("device") or "cpu",
             deterministic=True,
             stages=tuple(config["stages"]) if config.get("stages") else None,
@@ -319,22 +320,44 @@ def _evaluation_config(payload: dict[str, Any]) -> dict[str, Any]:
         "device": str(payload.get("device") or "cpu"),
         "stages": _stages(payload.get("stages")),
         "created_at": _now(),
-        "execution": {
-            "initial_cash": _number(payload.get("initial_cash"), 1_000_000.0),
-            "lot_size": int(_number(payload.get("lot_size"), 100)),
-            "max_position_ratio": _number(payload.get("max_position_ratio"), 0.20),
-            "commission_rate": _number(payload.get("commission_rate"), 0.0003),
-            "minimum_commission": _number(payload.get("minimum_commission"), 5.0),
-            "stamp_duty_rate": _number(payload.get("stamp_duty_rate"), 0.0005),
-            "transfer_fee_rate": _number(payload.get("transfer_fee_rate"), 0.00001),
-            "base_slippage_rate": _number(payload.get("base_slippage_rate"), 0.0002),
-        },
+        "execution_overrides": _execution_overrides(payload),
     }
 
 
 def _execution_config(config: dict[str, Any]) -> ExecutionConfig:
     values = dict(config.get("execution") or {})
     return ExecutionConfig(**values)
+
+
+def _execution_overrides(payload: dict[str, Any]) -> dict[str, Any]:
+    """Blank fields inherit the checkpoint; explicit zero remains a valid override."""
+    from dataclasses import fields
+    allowed = {field.name for field in fields(ExecutionConfig)}
+    result = {}
+    for name in allowed:
+        value = payload.get(name)
+        if value not in (None, ""):
+            number = float(value)
+            if name in {"lot_size", "holding_bar_cap"}:
+                if not number.is_integer():
+                    raise ValueError(f"{name} must be an integer")
+                number = int(number)
+            result[name] = number
+    # Validate supplied values against the same execution contract.
+    ExecutionConfig(**result)
+    return result
+
+
+def _legacy_replay_runner():
+    try:
+        from evaluation_layer.backtest.runner import run_policy_replay_to_files
+    except ModuleNotFoundError as exc:
+        if exc.name == "torch" or str(exc.name).startswith("torch."):
+            raise OptionalTrainingUnavailable(
+                "旧模型回放需要可选 PyTorch 环境。请使用策略回测工作台运行规则策略。"
+            ) from exc
+        raise
+    return run_policy_replay_to_files
 
 
 def _stages(value: Any) -> list[str] | None:

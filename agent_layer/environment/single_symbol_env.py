@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import pandas as pd
 
@@ -32,6 +32,7 @@ class SingleSymbolTradingEnv(AshareTradingEnv):
         drawdown_penalty: float = 0.0,
         turnover_penalty: float = 0.0,
         invalid_action_penalty: float = 0.0,
+        enforce_action_contract: bool = False,
     ) -> None:
         universe = tuple(getattr(loader, "universe", ()) or ())
         if len(universe) != 1:
@@ -64,6 +65,7 @@ class SingleSymbolTradingEnv(AshareTradingEnv):
             self.drawdown_penalty = float(drawdown_penalty)
             self.turnover_penalty = float(turnover_penalty)
             self.invalid_action_penalty = float(invalid_action_penalty)
+            self.enforce_action_contract = bool(enforce_action_contract)
             self._peak_nav = self.account.initial_cash
             return
         super().__init__(
@@ -77,6 +79,7 @@ class SingleSymbolTradingEnv(AshareTradingEnv):
             drawdown_penalty=drawdown_penalty,
             turnover_penalty=turnover_penalty,
             invalid_action_penalty=invalid_action_penalty,
+            enforce_action_contract=enforce_action_contract,
         )
 
     def reset(self) -> tuple[AgentObservation, dict[str, object]]:
@@ -94,6 +97,10 @@ class SingleSymbolTradingEnv(AshareTradingEnv):
             return super().prefetched_markets()
         end = min(len(self.keys), self._index + 33)
         return tuple(self._episode_buffer.market_step(i) for i in range(self._index + 1, end))
+
+    def close(self) -> None:
+        super().close()
+        self._episode_buffer = None
 
     def _load_market(self, key: TimelineKey):
         if self._episode_buffer is None:

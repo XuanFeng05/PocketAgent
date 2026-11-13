@@ -1,6 +1,6 @@
 {
-  "document_version": 1,
-  "schema_version": 1,
+  "document_version": 2,
+  "schema_version": 2,
   "items": [
     {
       "id": "group_market_price",
@@ -900,6 +900,24 @@
       "enabled": true
     },
     {
+      "id": "feature_runtime_state_buy_one_lot_required_ratio",
+      "type": "feature",
+      "name": "buy_one_lot_required_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_sell_one_lot_required_ratio",
+      "type": "feature",
+      "name": "sell_one_lot_required_ratio",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
       "id": "feature_runtime_state_max_buy_value_ratio",
       "type": "feature",
       "name": "max_buy_value_ratio",
@@ -939,8 +957,26 @@
       "frequencies": [],
       "missing_policy": "zero",
       "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_can_buy_one_lot",
+      "type": "feature",
+      "name": "can_buy_one_lot",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
+    },
+    {
+      "id": "feature_runtime_state_can_sell_one_lot",
+      "type": "feature",
+      "name": "can_sell_one_lot",
+      "stream": "runtime_state",
+      "frequencies": [],
+      "missing_policy": "zero",
+      "enabled": true
     }
   ],
-  "schema_hash": "17d6adc85b59d54e5ba524fb06060ede23eb5b1f3bb65603be09a28757c894e3",
-  "document_hash": "5affc99c0ebbb07050dcb8a730ea2e040eb7ca6935beb7f0b6878ba6b6de13ef"
+  "schema_hash": "ede7a95f8c4c4879ab2bca6e2286fd21266324e9fb6ee45aac270ce87200b6c5",
+  "document_hash": "f8de9b34d50158286184c0413d1f3fd6909ca698c21086926fe57947db451eaf"
 }

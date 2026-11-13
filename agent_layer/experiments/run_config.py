@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import hashlib
 import json
 from typing import Any, Iterable
@@ -101,6 +101,59 @@ class ValidationPolicy:
 
 
 @dataclass(frozen=True)
+class SplitPolicy:
+    validation_days: int = 20
+    test_days: int = 20
+    embargo_days: int = 5
+    folds: int = 1
+    min_train_days: int = 30
+
+    def validate(self) -> None:
+        for name in ("validation_days", "test_days", "folds", "min_train_days"):
+            if int(getattr(self, name)) <= 0:
+                raise ValueError(f"Split {name} must be positive.")
+        if int(self.embargo_days) < 0:
+            raise ValueError("Split embargo_days cannot be negative.")
+
+
+@dataclass(frozen=True)
+class RuntimePolicy:
+    amp_enabled: bool = False
+    amp_dtype: str = "float16"
+    size_distribution: str = "beta"
+    env_backend: str = "in_process"
+
+    def validate(self) -> None:
+        if self.amp_dtype not in {"float16", "bfloat16"}:
+            raise ValueError("AMP dtype must be float16 or bfloat16.")
+        if self.size_distribution not in {"beta", "logit_normal"}:
+            raise ValueError("Size distribution must be beta or logit_normal.")
+        if self.env_backend not in {"in_process", "subprocess"}:
+            raise ValueError("Environment backend must be in_process or subprocess.")
+
+
+@dataclass(frozen=True)
+class DistributedPolicy:
+    strategy: str = "off"
+    processes_per_node: int = 0
+    backend: str = "auto"
+    cpu_threads_per_process: int = 0
+    timeout_seconds: int = 1800
+
+    def validate(self) -> None:
+        if self.strategy not in {"off", "auto", "ddp"}:
+            raise ValueError("Distributed strategy must be off, auto, or ddp.")
+        if int(self.processes_per_node) < 0:
+            raise ValueError("Distributed processes_per_node cannot be negative.")
+        if self.backend not in {"auto", "nccl", "gloo"}:
+            raise ValueError("Distributed backend must be auto, nccl, or gloo.")
+        if int(self.cpu_threads_per_process) < 0:
+            raise ValueError("Distributed CPU threads per process cannot be negative.")
+        if int(self.timeout_seconds) < 60:
+            raise ValueError("Distributed timeout must be at least 60 seconds.")
+
+
+@dataclass(frozen=True)
 class AgentRunConfig:
     profile: str = "smoke"
     run_name: str = ""
@@ -108,7 +161,7 @@ class AgentRunConfig:
     symbols_file: str | None = "config/universe/smoke_symbols.txt"
     symbol_limit: int = 0
     symbol_seed: int = 42
-    fold: int = 3
+    fold: int = 1
     total_steps: int = 128
     episode_days: int = 5
     validation_days: int = 5
@@ -124,15 +177,19 @@ class AgentRunConfig:
     reward: RewardConfig = field(default_factory=RewardConfig)
     checkpoint: CheckpointPolicy = field(default_factory=CheckpointPolicy)
     validation: ValidationPolicy = field(default_factory=ValidationPolicy)
+    split: SplitPolicy = field(default_factory=SplitPolicy)
+    runtime: RuntimePolicy = field(default_factory=RuntimePolicy)
+    distributed: DistributedPolicy = field(default_factory=DistributedPolicy)
     resolved_symbols: tuple[str, ...] = ()
     resolved_validation_symbols: tuple[str, ...] = ()
     schema_hash: str = ""
 
     def validate(self) -> None:
-        if self.profile not in {"smoke", "formal", "custom"}:
-            raise ValueError("Run profile must be smoke, formal, or custom.")
-        if self.fold not in {1, 2, 3}:
-            raise ValueError("Walk-forward fold must be 1, 2, or 3.")
+        if self.profile not in {"smoke", "formal", "server", "custom"}:
+            raise ValueError("Run profile must be smoke, formal, server, or custom.")
+        self.split.validate()
+        if not 1 <= int(self.fold) <= int(self.split.folds):
+            raise ValueError(f"Walk-forward fold must be between 1 and {self.split.folds}.")
         for name in ("total_steps", "episode_days", "validation_days"):
             if int(getattr(self, name)) <= 0:
                 raise ValueError(f"{name} must be positive.")
@@ -167,6 +224,12 @@ class AgentRunConfig:
         self.reward.validate()
         self.checkpoint.validate()
         self.validation.validate()
+        self.runtime.validate()
+        self.distributed.validate()
+        if self.distributed.strategy == "ddp" and self.distributed.processes_per_node == 1:
+            raise ValueError("DDP requires zero (auto) or at least two processes per node.")
+        if self.device == "cpu" and self.distributed.backend == "nccl":
+            raise ValueError("NCCL requires CUDA training.")
         if self.resolved_validation_symbols and not set(
             self.resolved_validation_symbols
         ).issubset(self.resolved_symbols):
@@ -208,7 +271,12 @@ class AgentRunConfig:
 def agent_run_config_from_payload(payload: dict[str, Any]) -> AgentRunConfig:
     source = dict(payload or {})
     profile = str(source.get("profile") or "smoke")
-    defaults = formal_run_config() if profile == "formal" else AgentRunConfig()
+    if profile == "formal":
+        defaults = formal_run_config()
+    elif profile == "server":
+        defaults = server_run_config()
+    else:
+        defaults = AgentRunConfig()
     model = ModelHyperparameters(**_merged(asdict(defaults.model), source.get("model")))
     ppo_values = _merged(asdict(defaults.ppo), source.get("ppo"))
     for key in asdict(defaults.ppo):
@@ -221,6 +289,11 @@ def agent_run_config_from_payload(payload: dict[str, Any]) -> AgentRunConfig:
     )
     validation = ValidationPolicy(
         **_merged(asdict(defaults.validation), source.get("validation"))
+    )
+    split = SplitPolicy(**_merged(asdict(defaults.split), source.get("split")))
+    runtime = RuntimePolicy(**_merged(asdict(defaults.runtime), source.get("runtime")))
+    distributed = DistributedPolicy(
+        **_merged(asdict(defaults.distributed), source.get("distributed"))
     )
     values = {
         key: source.get(key, getattr(defaults, key))
@@ -246,6 +319,9 @@ def agent_run_config_from_payload(payload: dict[str, Any]) -> AgentRunConfig:
         reward=reward,
         checkpoint=checkpoint,
         validation=validation,
+        split=split,
+        runtime=runtime,
+        distributed=distributed,
     )
     config.validate()
     return config
@@ -255,10 +331,18 @@ def formal_run_config() -> AgentRunConfig:
     return AgentRunConfig(
         profile="formal",
         symbols_file="config/universe/available_universe.txt",
-        total_steps=3_000_000,
+        fold=3,
+        total_steps=1_000_000,
         episode_days=252,
         validation_days=126,
         parallel_envs=4,
+        split=SplitPolicy(
+            validation_days=126,
+            test_days=252,
+            embargo_days=20,
+            folds=3,
+            min_train_days=252,
+        ),
         ppo=MAPPOConfig(
             gamma=0.9995,
             gae_lambda=0.995,
@@ -287,6 +371,19 @@ def formal_run_config() -> AgentRunConfig:
             periodic_device="cpu",
             final_device="auto",
         ),
+        distributed=DistributedPolicy(strategy="auto"),
+    )
+
+
+def server_run_config() -> AgentRunConfig:
+    base = formal_run_config()
+    return replace(
+        base,
+        profile="server",
+        parallel_envs=16,
+        ppo=replace(base.ppo, minibatch_size=128),
+        runtime=replace(base.runtime, env_backend="subprocess"),
+        distributed=DistributedPolicy(strategy="auto"),
     )
 
 

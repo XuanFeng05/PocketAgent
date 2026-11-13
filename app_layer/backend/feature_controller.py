@@ -874,6 +874,7 @@ def _feature_parts_build_signature(request: dict[str, Any]) -> dict[str, Any]:
     model_input = compile_model_input_blueprint(load_model_input_blueprint(spec=spec), spec=spec)
     return {
         "version": 1,
+        "calculation_rules": "point_in_time_monthly_and_session_clock_20261107",
         "adjust": request["adjust"],
         "trade_freq": request["trade_freq"],
         "frequencies": list(request["config"].frequencies),

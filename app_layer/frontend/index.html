@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PocketAgent Console</title>
-  <link rel="stylesheet" href="/styles.css?v=20260628_i18n_headerfix" />
+  <title>PocketAgent 数据与特征工作台</title>
+  <link rel="stylesheet" href="/styles.css?v=20261107_data_workbench" />
 </head>
 <body>
   <div class="layout">
@@ -17,13 +17,14 @@
         </div>
       </div>
       <nav class="nav">
+        <a class="nav-item research-link" href="/">← 策略研究工作台</a>
         <button class="nav-item active" data-section="visualization">Visualization</button>
         <button class="nav-item" data-section="download">Download</button>
         <button class="nav-item" data-section="data">Data</button>
         <button class="nav-item" data-section="feature">Feature</button>
-        <button class="nav-item" data-section="agent">Agent</button>
-        <button class="nav-item" data-section="evaluation">Evaluation</button>
-        <button class="nav-item" data-section="live">Live</button>
+        
+        
+        
         <button class="nav-item" data-section="config">Config</button>
       </nav>
     </aside>
@@ -32,11 +33,7 @@
       <div class="language-switch"><button id="languageToggleBtn" class="secondary small" type="button">Language</button></div>
       <section id="visualization" class="page active">
         <div class="visual-shell" id="visualShell">
-          <div class="visual-tabs" role="tablist">
-            <button class="visual-tab active" data-visual-tab="market" type="button">Market View</button>
-            <button class="visual-tab" data-visual-tab="evaluation" type="button">Evaluation Replay</button>
-            <button class="visual-tab" data-visual-tab="live" type="button">Live Monitor</button>
-          </div>
+          
           <div class="visual-header">
             <div class="visual-quote">
               <strong id="visualQuoteSymbol">-</strong>
@@ -80,15 +77,7 @@
             </div>
           </div>
 
-          <div id="visualEvaluationPane" class="visual-evaluation-pane hidden">
-            <div class="visual-replay-toolbar">
-              <label>Evaluation Run<select id="visualEvaluationRunSelect"></select></label>
-              <button id="refreshVisualEvaluationRunsBtn" class="secondary small" type="button">Refresh Runs</button>
-              <button id="refreshVisualEvaluationReplayBtn" class="secondary small" type="button">Refresh Replay</button>
-              <button id="stopVisualEvaluationBtn" class="secondary small danger-text" type="button" disabled>Stop Evaluation</button>
-            </div>
-            <div id="visualEvaluationStatus" class="visual-status">Select an evaluation run.</div>
-          </div>
+          
 
           <div id="visualChartStatus" class="visual-status">Loading...</div>
 
@@ -132,15 +121,10 @@
                 <div class="muted">Move across the chart to inspect indicator values.</div>
               </div>
             </aside>
-            <aside id="evaluationStatsPanel" class="evaluation-stats-panel hidden">
-              <div class="visual-inspector-head"><strong>Evaluation Stats</strong><span id="evaluationReplayTime">-</span></div>
-              <div id="evaluationStatsContent" class="visual-inspector-content"><div class="muted">No evaluation data.</div></div>
-            </aside>
+            
           </div>
 
-          <div id="visualLivePane" class="visual-evaluation-pane hidden">
-            <div class="empty-card">Live Monitor is coming soon.</div>
-          </div>
+          
         </div>
       </section>
 
@@ -621,243 +605,9 @@
           </div>
         </div>
       </section>
-      <section id="agent" class="page">
-        <div class="page-header row-between">
-          <div><h1>Agent Layer</h1><p>Configure, run, and monitor persistent single-stock training.</p></div>
-          <button id="agentPopoutBtn" class="secondary" type="button">Open Monitor Window</button>
-        </div>
-        <div class="agent-tabs" role="tablist">
-          <button class="agent-tab active" data-agent-tab="setup" type="button">Setup</button>
-          <button class="agent-tab" data-agent-tab="monitor" type="button">Live Monitor</button>
-          <button class="agent-tab" data-agent-tab="runs" type="button">Runs &amp; Checkpoints</button>
-        </div>
-
-        <div id="agentTabSetup" class="agent-tab-panel active">
-          <div class="grid two">
-            <div class="card">
-              <h2>Run Setup</h2>
-              <div class="form-grid two-cols">
-                <label>Profile<select id="agentProfile" class="agent-config-input"><option value="smoke">Smoke</option><option value="formal">Formal</option><option value="custom">Custom</option></select></label>
-                <label>Run Name<input id="agentRunName" class="agent-config-input" placeholder="Optional label" /></label>
-                <label class="span-2">Training Dataset <small>Feature Dataset or Agent Cache.</small><input id="agentStorePath" class="agent-config-input" value="runtime_layer/reports/feature_dataset" /></label>
-                <label class="span-2">Symbols File <small>Leave empty for all dataset symbols.</small><input id="agentSymbolsFile" class="agent-config-input" value="config/universe/smoke_symbols.txt" /></label>
-                <label>Symbol Limit<input id="agentSymbolLimit" class="agent-config-input" type="number" min="0" value="0" /></label>
-                <label>Symbol Sample Seed<input id="agentSymbolSeed" class="agent-config-input" type="number" value="42" /></label>
-                <label>Walk-forward Fold<select id="agentFold" class="agent-config-input"><option value="1">Fold 1</option><option value="2">Fold 2</option><option value="3" selected>Fold 3</option></select></label>
-                <label>Device<select id="agentDevice" class="agent-config-input"><option value="cuda">CUDA</option><option value="cpu">CPU</option></select></label>
-                <label>Parallel Envs<input id="agentParallelEnvs" class="agent-config-input" type="number" min="1" value="1" /></label>
-                <label>Total Steps<input id="agentTotalSteps" class="agent-config-input" type="number" min="1" step="128" value="128" /></label>
-                <label>Episode Days<input id="agentEpisodeDays" class="agent-config-input" type="number" min="1" value="5" /></label>
-                <label>Validation Days<input id="agentValidationDays" class="agent-config-input" type="number" min="1" value="5" /></label>
-                <label>Seed<input id="agentSeed" class="agent-config-input" type="number" value="42" /></label>
-                <label class="checkbox-line"><input id="agentUseCache" class="agent-config-input" type="checkbox" checked /> Use Agent Cache</label>
-                <div class="span-2 form-block">
-                  <div class="field-label">Training Frequencies</div>
-                  <div id="agentFrequencyChoices" class="checkbox-grid">
-                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="5min" checked /> 5min</label>
-                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="15min" checked /> 15min</label>
-                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="30min" checked /> 30min</label>
-                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="60min" checked /> 60min</label>
-                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="daily" checked /> Daily</label>
-                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="weekly" checked /> Weekly</label>
-                    <label class="checkbox-line no-margin"><input class="agentFrequency agent-config-input" type="checkbox" value="monthly" /> Monthly</label>
-                  </div>
-                  <div class="help-text">Uncheck a frequency to exclude it. If none are checked, the Agent uses every frequency embedded in the Feature Dataset.</div>
-                </div>
-                <label class="span-2">Model Output Directory<input id="agentOutputDir" class="agent-config-input" value="runtime_layer/models/agent" /></label>
-              </div>
-            </div>
-            <div class="card">
-              <h2>Agent Cache</h2>
-              <p class="help-text">Build an index-based Agent cache from the current Feature Dataset before training. It stores per-symbol feature matrices and decision indices, not expanded windows.</p>
-              <div class="form-grid two-cols">
-                <label class="span-2">Source Feature Dataset<input id="agentCacheFeatureDir" value="runtime_layer/reports/feature_dataset" /></label>
-                <label class="span-2">Output Cache<input id="agentCacheOutputDir" value="runtime_layer/agent_cache/full" /></label>
-                <label class="span-2">Symbols File<input id="agentCacheSymbolsFile" value="" placeholder="Blank = all symbols in Feature Dataset" /></label>
-                <label>Workers<input id="agentCacheWorkers" type="number" min="1" value="4" /></label>
-                <label>Max Decisions / Symbol<input id="agentCacheMaxDecisions" type="number" min="0" value="0" /><small>0 means full cache.</small></label>
-                <label class="checkbox-line"><input id="agentCacheReset" type="checkbox" checked /> Reset output before build</label>
-              </div>
-              <div class="actions no-top"><button id="buildAgentCacheBtn" type="button">Build Agent Cache</button><button id="stopAgentCacheBtn" class="secondary danger-text" type="button" disabled>Stop Cache Build</button><button id="inspectAgentCacheBtn" class="secondary" type="button">Inspect Cache</button><button id="useAgentCachePathBtn" class="secondary" type="button">Use Cache for Training</button></div>
-              <div id="agentCacheStatus" class="job-status muted">Agent Cache Status: idle</div>
-              <div class="progress-wrap"><div id="agentCacheProgressBar" class="progress-bar" style="width:0%"></div></div>
-              <div id="agentCacheSummary" class="summary-grid compact result-summary"></div>
-              <div class="table-wrap compact-scroll"><table><thead><tr><th>Symbol</th><th>Decisions</th><th>Range</th><th>Shapes</th></tr></thead><tbody id="agentCacheTableBody"><tr><td colspan="4" class="muted">Build or inspect a cache.</td></tr></tbody></table></div>
-            </div>
-
-            <div class="card">
-              <h2>Frozen Agent v1 Contract</h2>
-              <div id="agentContractSummary" class="summary-grid compact result-summary"></div>
-              <div class="table-wrap compact-scroll"><table><thead><tr><th>Section</th><th>Setting</th><th>Value</th></tr></thead><tbody id="agentContractTableBody"><tr><td colspan="3" class="muted">Loading...</td></tr></tbody></table></div>
-            </div>
-          </div>
-
-          <div class="card agent-parameter-card">
-            <h2>Training Parameters</h2>
-            <details open><summary>PPO Optimization</summary><div class="form-grid parameter-grid">
-              <label>Learning Rate<input id="agentLearningRate" class="agent-config-input" type="number" step="0.000001" value="0.00007" /></label>
-              <label>Final Learning Rate<input id="agentFinalLearningRate" class="agent-config-input" type="number" step="0.000001" value="0.000007" /></label>
-              <label>Gamma<input id="agentGamma" class="agent-config-input" type="number" step="0.0001" value="0.9995" /></label>
-              <label>GAE Lambda<input id="agentGaeLambda" class="agent-config-input" type="number" step="0.001" value="0.995" /></label>
-              <label>Rollout Steps<input id="agentRolloutSteps" class="agent-config-input" type="number" min="1" value="128" /></label>
-              <label>Minibatch Size<input id="agentMinibatchSize" class="agent-config-input" type="number" min="1" value="8" /></label>
-              <label>Update Epochs<input id="agentUpdateEpochs" class="agent-config-input" type="number" min="1" value="10" /></label>
-              <label>Clip Ratio<input id="agentClipRatio" class="agent-config-input" type="number" step="0.01" value="0.2" /></label>
-              <label>Value Clip<input id="agentValueClip" class="agent-config-input" type="number" step="0.01" value="0.2" /></label>
-              <label>Value Coefficient<input id="agentValueCoefficient" class="agent-config-input" type="number" step="0.01" value="0.5" /></label>
-              <label>Entropy Coefficient<input id="agentEntropyCoefficient" class="agent-config-input" type="number" step="0.001" value="0.01" /></label>
-              <label>Max Gradient Norm<input id="agentMaxGradientNorm" class="agent-config-input" type="number" step="0.05" value="0.5" /></label>
-              <label>Target KL<input id="agentTargetKl" class="agent-config-input" type="number" step="0.005" value="0.02" /></label>
-            </div></details>
-            <details><summary>Model Capacity</summary><div class="form-grid parameter-grid">
-              <label>Input Projection<input id="agentInputProjection" class="agent-config-input" type="number" min="1" value="64" /></label>
-              <label>LSTM Hidden<input id="agentLstmHidden" class="agent-config-input" type="number" min="1" value="128" /></label>
-              <label>LSTM Layers<input id="agentLstmLayers" class="agent-config-input" type="number" min="1" value="2" /></label>
-              <label>Fused Market<input id="agentFusedMarket" class="agent-config-input" type="number" min="1" value="128" /></label>
-              <label>Context Embedding<input id="agentContextEmbedding" class="agent-config-input" type="number" min="1" value="32" /></label>
-              <label>Runtime Embedding<input id="agentRuntimeEmbedding" class="agent-config-input" type="number" min="1" value="32" /></label>
-              <label>Local State<input id="agentLocalState" class="agent-config-input" type="number" min="1" value="128" /></label>
-              <label>Global State<input id="agentGlobalState" class="agent-config-input" type="number" min="1" value="128" /></label>
-              <label>Dropout<input id="agentDropout" type="number" value="0" disabled /><small>Fixed at zero for PPO likelihood consistency.</small></label>
-            </div></details>
-            <details><summary>Execution &amp; Costs</summary><div class="form-grid parameter-grid">
-              <label>Initial Cash<input id="agentInitialCash" class="agent-config-input" type="number" min="1" value="1000000" /></label>
-              <label>Lot Size<input id="agentLotSize" class="agent-config-input" type="number" min="1" value="100" /></label>
-              <label>Max Position Ratio<input id="agentMaxPosition" class="agent-config-input" type="number" step="0.01" value="0.2" /></label>
-              <label>Bar Participation<input id="agentBarParticipation" class="agent-config-input" type="number" step="0.01" value="0.1" /></label>
-              <label>Auction Participation<input id="agentAuctionParticipation" class="agent-config-input" type="number" step="0.01" value="0.02" /></label>
-              <label>Commission Rate<input id="agentCommission" class="agent-config-input" type="number" step="0.00001" value="0.0003" /></label>
-              <label>Minimum Commission<input id="agentMinimumCommission" class="agent-config-input" type="number" step="0.1" value="5" /></label>
-              <label>Stamp Duty<input id="agentStampDuty" class="agent-config-input" type="number" step="0.00001" value="0.0005" /></label>
-              <label>Transfer Fee<input id="agentTransferFee" class="agent-config-input" type="number" step="0.000001" value="0.00001" /></label>
-              <label>Base Slippage<input id="agentBaseSlippage" class="agent-config-input" type="number" step="0.00001" value="0.0002" /></label>
-              <label>Impact Coefficient<input id="agentImpactCoefficient" class="agent-config-input" type="number" step="0.0001" value="0.001" /></label>
-              <label>Maximum Slippage<input id="agentMaximumSlippage" class="agent-config-input" type="number" step="0.0001" value="0.005" /></label>
-              <label>Holding Bar Cap<input id="agentHoldingBarCap" class="agent-config-input" type="number" min="1" value="1000" /></label>
-            </div></details>
-            <details><summary>Reward</summary><p class="help-text agent-formula">scale * (log(NAV after / NAV before) - hurdle accrual) - drawdown penalty - turnover penalty - invalid-action penalty</p><div class="form-grid parameter-grid">
-              <label>Reward Kind<input value="Net NAV log return" disabled /></label>
-              <label>Scale<input id="agentRewardScale" class="agent-config-input" type="number" step="0.1" value="1" /></label>
-              <label>Annual Hurdle Rate<input id="agentHurdleRate" class="agent-config-input" type="number" step="0.0001" value="0" /><small>Risk-free benchmark, e.g. 0.015 for 1.5%.</small></label>
-              <label>Drawdown Penalty<input id="agentDrawdownPenalty" class="agent-config-input" type="number" step="0.01" value="0" /></label>
-              <label>Turnover Penalty<input id="agentTurnoverPenalty" class="agent-config-input" type="number" step="0.01" value="0" /></label>
-              <label>Invalid Action Penalty<input id="agentInvalidPenalty" class="agent-config-input" type="number" step="0.01" value="0" /></label>
-            </div></details>
-            <details><summary>Checkpoint &amp; Validation Schedule</summary><div class="form-grid parameter-grid">
-              <label>Checkpoint Every Updates<input id="agentCheckpointInterval" class="agent-config-input" type="number" min="1" value="5" /></label>
-              <label>Validate Every Updates<input id="agentValidationInterval" class="agent-config-input" type="number" min="0" value="50" /></label>
-              <label>Keep Last<input id="agentKeepLast" class="agent-config-input" type="number" min="1" value="5" /></label>
-              <label>Best Metric<select id="agentBestMetric" class="agent-config-input"><option value="sharpe">Sharpe</option><option value="calmar">Calmar</option><option value="total_return">Total Return</option></select></label>
-              <label>Validation Symbols<input id="agentValidationSymbolLimit" class="agent-config-input" type="number" min="1" value="5" /></label>
-              <label>Validation Sample Seed<input id="agentValidationSymbolSeed" class="agent-config-input" type="number" value="2026" /></label>
-              <label>Quick Validation Days<input id="agentQuickValidationDays" class="agent-config-input" type="number" min="1" value="5" /></label>
-              <label>Periodic Validation Device<select id="agentPeriodicValidationDevice" class="agent-config-input"><option value="cpu">CPU</option><option value="cuda">CUDA</option><option value="auto">Auto</option></select></label>
-              <label>Final Validation Device<select id="agentFinalValidationDevice" class="agent-config-input"><option value="auto">Auto</option><option value="cuda">CUDA</option><option value="cpu">CPU</option></select></label>
-            </div></details>
-          </div>
-
-          <div class="card">
-            <div class="actions agent-primary-actions"><button id="agentPreflightBtn" class="secondary" type="button">Preflight</button><button id="startAgentTrainingBtn" type="button">Start Training</button></div>
-            <div id="agentPreflightStatus" class="job-status muted">Preflight Status: idle</div>
-            <div id="agentPreflightSummary" class="summary-grid compact result-summary"></div>
-            <div class="table-wrap compact-scroll"><table><thead><tr><th>Check</th><th>Status</th><th>Message</th></tr></thead><tbody id="agentPreflightTableBody"><tr><td colspan="3" class="muted">Run preflight before training.</td></tr></tbody></table></div>
-          </div>
-        </div>
-
-        <div id="agentTabMonitor" class="agent-tab-panel">
-          <div class="card">
-            <div class="row-between"><div><h2>Live Training</h2><div id="agentJobStatus" class="job-status muted">Training Status: idle</div></div><div class="actions no-top"><button id="pauseAgentRunBtn" class="secondary" type="button" disabled>Pause</button><button id="resumeAgentRunBtn" class="secondary" type="button" disabled>Resume</button><button id="checkpointAgentRunBtn" class="secondary" type="button" disabled>Save Now</button><button id="stopAgentTrainingBtn" class="secondary danger-text" type="button" disabled>Stop</button></div></div>
-            <div class="progress-wrap"><div id="agentProgressBar" class="progress-bar" style="width:0%"></div></div>
-            <div id="agentTrainingSummary" class="summary-grid compact result-summary"></div>
-            <div id="agentValidationStatus" class="job-status muted agent-validation-status">Validation Status: idle</div>
-            <div class="progress-wrap"><div id="agentValidationProgressBar" class="progress-bar validation-progress" style="width:0%"></div></div>
-          </div>
-          <div class="agent-metric-sections">
-            <section class="agent-metric-section" data-agent-chart-group="progress">
-              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="progress"><span>Training Progress</span><span class="agent-section-caret">▾</span></button>
-              <div class="agent-chart-grid agent-metric-section-body">
-                <div class="agent-chart-panel"><h3>Cumulative Training Steps</h3><canvas id="agentStepsChart" class="agent-metric-chart" data-agent-chart-id="agentStepsChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentStepsChart"></div></div>
-                <div class="agent-chart-panel"><h3>Training Speed</h3><canvas id="agentSpeedChart" class="agent-metric-chart" data-agent-chart-id="agentSpeedChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentSpeedChart"></div></div>
-              </div>
-            </section>
-            <section class="agent-metric-section" data-agent-chart-group="hardware">
-              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="hardware"><span>Hardware Performance</span><span class="agent-section-caret">▾</span></button>
-              <div class="agent-chart-grid agent-metric-section-body">
-                <div class="agent-chart-panel"><h3>Hardware Usage</h3><canvas id="agentHardwareChart" class="agent-metric-chart" data-agent-chart-id="agentHardwareChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentHardwareChart"></div></div>
-                <div class="agent-chart-panel"><h3>Time Breakdown</h3><canvas id="agentLatencyChart" class="agent-metric-chart" data-agent-chart-id="agentLatencyChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentLatencyChart"></div></div>
-              </div>
-            </section>
-            <section class="agent-metric-section" data-agent-chart-group="trading">
-              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="trading"><span>Trading Performance</span><span class="agent-section-caret">▾</span></button>
-              <div class="agent-chart-grid agent-metric-section-body">
-                <div class="agent-chart-panel"><h3>Reward & Asset</h3><canvas id="agentRewardChart" class="agent-metric-chart" data-agent-chart-id="agentRewardChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentRewardChart"></div></div>
-                <div class="agent-chart-panel"><h3>Actions & Costs</h3><canvas id="agentActionChart" class="agent-metric-chart" data-agent-chart-id="agentActionChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentActionChart"></div></div>
-              </div>
-            </section>
-            <section class="agent-metric-section" data-agent-chart-group="algorithm">
-              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="algorithm"><span>Algorithm Learning</span><span class="agent-section-caret">▾</span></button>
-              <div class="agent-chart-grid agent-metric-section-body">
-                <div class="agent-chart-panel"><h3>Loss</h3><canvas id="agentLossChart" class="agent-metric-chart" data-agent-chart-id="agentLossChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentLossChart"></div></div>
-                <div class="agent-chart-panel"><h3>PPO Health</h3><canvas id="agentPolicyChart" class="agent-metric-chart" data-agent-chart-id="agentPolicyChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentPolicyChart"></div></div>
-              </div>
-            </section>
-            <section class="agent-metric-section" data-agent-chart-group="validation">
-              <button class="agent-metric-section-head" type="button" data-agent-toggle-group="validation"><span>Validation Evaluation</span><span class="agent-section-caret">▾</span></button>
-              <div class="agent-chart-grid agent-metric-section-body">
-                <div class="agent-chart-panel"><h3>Validation Return</h3><canvas id="agentValidationReturnChart" class="agent-metric-chart" data-agent-chart-id="agentValidationReturnChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentValidationReturnChart"></div></div>
-                <div class="agent-chart-panel"><h3>Validation Risk</h3><canvas id="agentValidationRiskChart" class="agent-metric-chart" data-agent-chart-id="agentValidationRiskChart" width="720" height="230"></canvas><div class="agent-chart-legend" data-agent-chart-legend="agentValidationRiskChart"></div></div>
-              </div>
-            </section>
-          </div>
-          <div class="grid two">
-            <div class="card"><h2>Latest Telemetry</h2><div id="agentTelemetrySummary" class="summary-grid compact result-summary"></div></div>
-            <div class="card"><h2>Validation</h2><div id="agentValidationSummary" class="summary-grid compact result-summary"></div></div>
-          </div>
-          <div class="card"><details class="job-log-box" open><summary>Agent Logs</summary><pre id="agentJobLogs" class="mini-log">No logs yet.</pre></details></div>
-        </div>
-
-        <div id="agentTabRuns" class="agent-tab-panel">
-          <div class="card"><div class="row-between"><h2>Training Runs</h2><button id="refreshAgentRunsBtn" class="secondary" type="button">Refresh</button></div><div class="table-wrap agent-runs-scroll"><table><thead><tr><th>Run</th><th>Training</th><th>Validation</th><th>Progress</th><th>Steps</th><th>Updated</th><th>Action</th></tr></thead><tbody id="agentRunsTableBody"><tr><td colspan="7" class="muted">No runs loaded.</td></tr></tbody></table></div></div>
-          <div class="card"><h2>Checkpoints</h2><div class="placeholder-panel compact-placeholder">Use Manage on a run to view its checkpoint list. Export to Evaluation is reserved for the Evaluation Layer integration.</div></div>
-        </div>
-      </section>
-      <section id="evaluation" class="page">
-        <div class="page-header"><h1>Evaluation Layer</h1></div>
-        <div class="grid two">
-          <div class="card">
-            <h2>Start Evaluation</h2>
-            <div class="form-grid two-cols">
-              <label>Evaluation Model<select id="evaluationModelSelect"></select></label>
-              <label>Feature Dataset<input id="evaluationFeatureDataset" value="runtime_layer/reports/feature_dataset" /></label>
-              <label>Symbol<input id="evaluationSymbol" placeholder="000001.SZ" /></label>
-              <label>Device<select id="evaluationDevice"><option value="cpu">CPU</option><option value="cuda">CUDA</option></select></label>
-              <label>Start Date<input id="evaluationStart" type="date" /></label>
-              <label>End Date<input id="evaluationEnd" type="date" /></label>
-              <label>Initial Cash<input id="evaluationInitialCash" type="number" min="1" value="1000000" /></label>
-              <label>Lot Size<input id="evaluationLotSize" type="number" min="1" value="100" /></label>
-              <label>Max Position Ratio<input id="evaluationMaxPosition" type="number" step="0.01" value="0.2" /></label>
-              <label>Commission Rate<input id="evaluationCommission" type="number" step="0.00001" value="0.0003" /></label>
-              <label>Base Slippage<input id="evaluationSlippage" type="number" step="0.00001" value="0.0002" /></label>
-              <label>Minimum Commission<input id="evaluationMinCommission" type="number" step="0.1" value="5" /></label>
-            </div>
-            <div class="actions">
-              <button id="refreshEvaluationModelsBtn" class="secondary" type="button">Refresh Models</button>
-              <button id="startEvaluationBtn" type="button">Start Evaluation</button>
-              <button id="stopEvaluationBtn" class="secondary danger-text" type="button" disabled>Stop Evaluation</button>
-            </div>
-            <div id="evaluationStartStatus" class="muted">Export a model from Agent first, then start a single-symbol evaluation.</div>
-          </div>
-          <div class="card">
-            <h2>Model Pool</h2>
-            <div class="table-wrap compact-scroll"><table><thead><tr><th>Name</th><th>Source</th><th>Step</th><th>Exported</th></tr></thead><tbody id="evaluationModelsTableBody"><tr><td colspan="4" class="muted">No exported models.</td></tr></tbody></table></div>
-          </div>
-        </div>
-        <div class="card">
-          <div class="row-between"><h2>Evaluation Runs</h2><button id="refreshEvaluationRunsBtn" class="secondary" type="button">Refresh Runs</button></div>
-          <div class="table-wrap compact-scroll"><table><thead><tr><th>Run</th><th>Model</th><th>Symbol</th><th>Status</th><th>Return</th><th>Drawdown</th><th>Updated</th><th>Action</th></tr></thead><tbody id="evaluationRunsTableBody"><tr><td colspan="8" class="muted">No evaluation runs.</td></tr></tbody></table></div>
-        </div>
-      </section>
-      <section id="live" class="page"><div class="page-header"><h1>Live Layer</h1></div><div class="empty-card">Live Layer is coming soon.</div></section>
+      
+      
+      
       <section id="config" class="page">
         <div class="page-header">
           <h1>Config</h1>
@@ -973,43 +723,10 @@
   </div>
 
 
-  <div id="agentCheckpointModal" class="modal hidden">
-    <div class="modal-backdrop" id="agentCheckpointModalBackdrop"></div>
-    <div class="modal-panel agent-checkpoint-modal-panel">
-      <div class="modal-header">
-        <div>
-          <h2 id="agentCheckpointModalTitle">Run Checkpoints</h2>
-          <p id="agentCheckpointModalSubtitle" class="help-text">-</p>
-        </div>
-        <button id="closeAgentCheckpointModalBtn" class="secondary" type="button">Close</button>
-      </div>
-      <div id="agentCheckpointModalSummary" class="summary-grid compact result-summary modal-summary-row"></div>
-      <div class="modal-table-wrap table-wrap">
-        <table>
-          <thead><tr><th>Name</th><th>Step</th><th>Reason</th><th>Validation</th><th>Size</th><th>Modified</th><th>Action</th></tr></thead>
-          <tbody id="agentCheckpointModalTableBody"><tr><td colspan="7" class="muted">No checkpoint saved yet.</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+  
 
-  <div id="agentExportConflictModal" class="modal hidden">
-    <div class="modal-backdrop" id="agentExportConflictBackdrop"></div>
-    <div class="modal-panel compact-modal-panel">
-      <div class="modal-header">
-        <div>
-          <h2>Evaluation Model Exists</h2>
-          <p id="agentExportConflictMessage" class="help-text">Choose how to handle the existing model name.</p>
-        </div>
-      </div>
-      <div class="actions">
-        <button id="agentExportRenameBtn" class="secondary" type="button">Rename</button>
-        <button id="agentExportOverwriteBtn" type="button">Overwrite</button>
-        <button id="agentExportCancelBtn" class="secondary" type="button">Cancel</button>
-      </div>
-    </div>
-  </div>
+  
 
-  <script src="/app.js?v=20260630_evaluation_stop"></script>
+  <script src="/app.js?v=20261107_data_workbench"></script>
 </body>
 </html>

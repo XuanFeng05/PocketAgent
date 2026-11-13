@@ -1,20 +1,5 @@
-# PocketAgent runtime dependencies
-#
-# Recommended Python: 3.12.x
-#
-# GPU training target used by the current development environment:
-#   PyTorch 2.12.1 + CUDA 12.6
-#
-# Install:
-#   python -m pip install --upgrade pip
-#   python -m pip install -r requirements.txt
-#
-# Verify CUDA:
-#   python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
-#
-# If you need CPU-only PyTorch, remove "+cu126" from torch and remove the
-# PyTorch CUDA index line below.
---extra-index-url https://download.pytorch.org/whl/cu126
+# PocketAgent CPU research and dashboard dependencies. Python 3.12 recommended.
+# Optional legacy neural-network training: requirements-training.txt.
 
 # Core data stack
 numpy>=2.0,<3
@@ -26,9 +11,5 @@ pyyaml>=6.0,<7
 # A-share market data source
 baostock>=0.8.9,<1
 
-# Agent training / evaluation
-torch==2.12.1+cu126
+# Process monitoring
 psutil>=6.0,<8
-
-# Tests
-pytest>=8.0,<9

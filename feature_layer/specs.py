@@ -218,6 +218,8 @@ PORTFOLIO_FIELDS_V1: tuple[FeatureField, ...] = _fields(
         ("unrealized_pnl_ratio", "portfolio", "Unrealized PnL divided by account equity.", (-1.0, 1.0)),
         ("holding_bars_norm", "portfolio", "Holding duration normalized by the configured cap.", (0.0, 1.0)),
         ("one_lot_nav_ratio", "portfolio", "One-lot notional divided by account equity.", (0.0, 1.0)),
+        ("buy_one_lot_required_ratio", "portfolio", "One-lot buy cost divided by currently usable buy notional, clipped near the one-lot boundary.", (0.0, 1.1)),
+        ("sell_one_lot_required_ratio", "portfolio", "One-lot sell notional divided by currently usable sell notional, clipped near the one-lot boundary.", (0.0, 1.1)),
         ("max_buy_value_ratio", "portfolio", "Maximum buyable notional divided by account equity.", (0.0, 1.0)),
         ("max_sell_value_ratio", "portfolio", "Maximum sellable notional divided by account equity.", (0.0, 1.0)),
     ]
@@ -240,6 +242,8 @@ ENVIRONMENT_FIELDS_V1: tuple[FeatureField, ...] = _fields(
     [
         ("can_buy", "environment", "1 when both market rules and current account state allow buying.", (0.0, 1.0)),
         ("can_sell", "environment", "1 when both market rules and current account state allow selling.", (0.0, 1.0)),
+        ("can_buy_one_lot", "environment", "1 when current market and account limits allow buying at least one lot.", (0.0, 1.0)),
+        ("can_sell_one_lot", "environment", "1 when current market and account limits allow selling at least one lot.", (0.0, 1.0)),
     ]
 )
 

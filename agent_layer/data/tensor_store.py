@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import numpy as np
 import pandas as pd
 
@@ -25,6 +26,23 @@ def write_array(path: str | Path, values: np.ndarray) -> Path:
     temporary = output.with_suffix(output.suffix + ".tmp")
     with temporary.open("wb") as handle:
         np.save(handle, values)
+    temporary.replace(output)
+    return output
+
+
+def write_parquet_frame(path: str | Path, frame: pd.DataFrame) -> Path:
+    """Write Parquet without requiring pandas' optional pyarrow dependency."""
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    if temporary.exists():
+        temporary.unlink()
+    with duckdb.connect(":memory:") as connection:
+        connection.register("cache_frame", frame)
+        connection.execute(
+            "COPY cache_frame TO ? (FORMAT PARQUET)",
+            [str(temporary)],
+        )
     temporary.replace(output)
     return output
 
@@ -87,7 +105,7 @@ def write_symbol_cache(
 ) -> Path:
     output_dir = Path(symbol_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    decisions.to_parquet(output_dir / DECISIONS_NAME, index=False)
+    write_parquet_frame(output_dir / DECISIONS_NAME, decisions)
     write_array(output_dir / DECISION_CONTEXT_NAME, np.asarray(decision_context, dtype=np.float32))
     write_array(output_dir / EXECUTION_NAME, np.asarray(execution, dtype=np.float32))
     write_array(output_dir / CONSTRAINTS_NAME, np.asarray(constraints, dtype=np.uint8))

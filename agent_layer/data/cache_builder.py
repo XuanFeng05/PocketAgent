@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import shutil
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
-import shutil
 
 import numpy as np
 import pandas as pd
@@ -16,17 +16,32 @@ from agent_layer.data.cache_schema import (
     CACHE_STORAGE_INDEX_BASED,
     CONSTRAINT_COLUMNS,
     EXECUTION_COLUMNS,
+    SOURCE_DATASET_FINGERPRINT_VERSION,
     AgentCacheManifest,
     SymbolCacheMetadata,
+    feature_parts_source_fingerprint,
     normalize_symbol_list,
     safe_symbol_name,
     symbol_cache_dir,
     write_json,
 )
-from agent_layer.data.episode_index import build_episode_index_frame, write_episode_index
+from agent_layer.data.decision_cache import _attach_liquidity
+from agent_layer.data.episode_index import (
+    build_episode_index_frame,
+    read_episode_index,
+    write_episode_index,
+)
 from agent_layer.data.feature_parts import FeaturePartsDataset
 from agent_layer.data.tensor_store import describe_symbol_cache, write_symbol_cache
-
+from feature_layer.builders.aggregation import normalize_frequency
+from feature_layer.builders.snapshot_features import RAW_COLUMNS as SNAPSHOT_RAW_COLUMNS
+from feature_layer.builders.snapshot_features import SnapshotFeatureEngine
+from feature_layer.datasets.compact import (
+    _fast_snapshot_row_from_arrays,
+    _raw_day_lookup,
+    _raw_symbol_lookup,
+    _spec_from_store,
+)
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 CancelCheck = Callable[[], bool]
@@ -53,9 +68,10 @@ def build_agent_cache(
     progress_callback: ProgressCallback | None = None,
     cancel_check: CancelCheck | None = None,
 ) -> dict[str, Any]:
-    feature_dir = Path(config.feature_dir)
+    feature_dir = Path(config.feature_dir).resolve()
     output_dir = Path(config.output_dir)
     if config.reset and output_dir.exists():
+        _ensure_safe_cache_reset_target(output_dir)
         shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     source = FeaturePartsDataset(feature_dir)
@@ -86,7 +102,35 @@ def build_agent_cache(
             "Agent cache frequencies are absent from the Feature Parts Dataset: "
             + ", ".join(missing_freqs)
         )
-    worker_count = max(1, int(config.workers))
+    source_fingerprint = feature_parts_source_fingerprint(
+        source.dataset_dir,
+        symbols=selected_symbols,
+        frequencies=selected_frequencies,
+    )
+    created_at = datetime.now(timezone.utc).isoformat()
+    # Invalidate any older manifest before touching symbol files.  If a build is
+    # cancelled or crashes, readers see an explicitly incomplete v3 cache rather
+    # than silently combining a stale manifest with partially replaced arrays.
+    write_json(
+        output_dir / CACHE_MANIFEST_NAME,
+        AgentCacheManifest(
+            cache_version=AGENT_CACHE_VERSION,
+            source_feature_dir=str(source.dataset_dir),
+            schema_hash=str(compiled.get("schema_hash") or ""),
+            frequencies=tuple(selected_frequencies),
+            symbols=(),
+            symbol_count=0,
+            decision_count=0,
+            created_at=created_at,
+            storage=CACHE_STORAGE_INDEX_BASED,
+            requested_symbols=tuple(selected_symbols),
+            failed_symbols=tuple(selected_symbols),
+            source_dataset_fingerprint=source_fingerprint,
+            source_dataset_fingerprint_version=SOURCE_DATASET_FINGERPRINT_VERSION,
+            complete=False,
+        ).to_json_dict(),
+    )
+    worker_count = max(1, min(int(config.workers), len(selected_symbols)))
     jobs = [
         _SymbolCacheJob(
             feature_dir=str(feature_dir),
@@ -144,30 +188,55 @@ def build_agent_cache(
                     future.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise
-    failures = [item for item in summaries if item.get("error")]
-    success = [item for item in summaries if not item.get("error") and int(item.get("decision_count") or 0) > 0]
+    summary_by_symbol = {
+        str(item.get("symbol") or "").upper(): item
+        for item in summaries
+        if str(item.get("symbol") or "").strip()
+    }
+    ordered_summaries: list[dict[str, Any]] = []
+    for symbol in selected_symbols:
+        summary = summary_by_symbol.get(symbol)
+        if summary is None:
+            summary = {
+                "symbol": symbol,
+                "safe_symbol": safe_symbol_name(symbol),
+                "decision_count": 0,
+                "error": "Agent cache worker returned no result.",
+            }
+        elif not summary.get("error") and int(summary.get("decision_count") or 0) <= 0:
+            summary = {**summary, "error": "No decisions were cached for the selected range."}
+        ordered_summaries.append(summary)
+    failures = [item for item in ordered_summaries if item.get("error")]
+    success = [item for item in ordered_summaries if not item.get("error")]
     episode_index = build_episode_index_frame(success)
     write_episode_index(output_dir, episode_index)
+    complete = not failures and len(success) == len(selected_symbols)
     manifest = AgentCacheManifest(
         cache_version=AGENT_CACHE_VERSION,
-        source_feature_dir=str(feature_dir),
+        source_feature_dir=str(source.dataset_dir),
         schema_hash=str(compiled.get("schema_hash") or ""),
         frequencies=tuple(selected_frequencies),
         symbols=tuple(str(item["symbol"]) for item in success),
         symbol_count=len(success),
         decision_count=int(sum(int(item.get("decision_count") or 0) for item in success)),
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=created_at,
         storage=CACHE_STORAGE_INDEX_BASED,
+        requested_symbols=tuple(selected_symbols),
+        failed_symbols=tuple(str(item.get("symbol") or "") for item in failures),
+        source_dataset_fingerprint=source_fingerprint,
+        source_dataset_fingerprint_version=SOURCE_DATASET_FINGERPRINT_VERSION,
+        complete=complete,
     )
     write_json(output_dir / CACHE_MANIFEST_NAME, manifest.to_json_dict())
     return {
-        "ok": not failures and bool(success),
+        "ok": complete,
         "output_dir": str(output_dir),
         "symbols": len(success),
         "failed_symbols": len(failures),
         "decision_count": manifest.decision_count,
         "frequencies": list(selected_frequencies),
         "schema_hash": manifest.schema_hash,
+        "source_dataset_fingerprint": manifest.source_dataset_fingerprint,
         "storage": CACHE_STORAGE_INDEX_BASED,
         "failures": failures,
         "episode_index_rows": int(len(episode_index)),
@@ -187,12 +256,27 @@ def inspect_agent_cache(cache_dir: str | Path, *, sample_symbols: int = 3) -> di
     for symbol in symbols[: max(0, int(sample_symbols))]:
         samples.append(describe_symbol_cache(symbol_cache_dir(root, symbol)))
     episode_index_path = root / "episode_index.parquet"
-    episode_rows = int(len(pd.read_parquet(episode_index_path))) if episode_index_path.exists() else 0
+    episode_rows = int(len(read_episode_index(root))) if episode_index_path.exists() else 0
     return {
         "manifest": manifest,
         "episode_index_rows": episode_rows,
         "samples": samples,
     }
+
+
+def _ensure_safe_cache_reset_target(path: Path) -> None:
+    resolved = path.resolve()
+    parts = tuple(part.lower() for part in resolved.parts)
+    if "agent_cache" not in parts:
+        raise ValueError(
+            f"Refusing to reset non-Agent-cache directory: {resolved}. "
+            "Choose a directory under runtime_layer/agent_cache."
+        )
+    cache_index = parts.index("agent_cache")
+    if len(parts) <= cache_index + 1:
+        raise ValueError(f"Refusing to reset the Agent cache root directory: {resolved}")
+    if resolved.parent == resolved:
+        raise ValueError(f"Refusing to reset filesystem root: {resolved}")
 
 
 @dataclass(frozen=True)
@@ -267,8 +351,11 @@ def _build_symbol_cache_worker(job: _SymbolCacheJob) -> dict[str, Any]:
         snapshot_features[freq] = np.zeros((count, channels), dtype=np.float32)
     _fill_snapshot_features(
         source,
+        decisions=rows,
+        index_rows=index_rows,
         decision_ids=decision_ids,
         frequencies=job.frequencies,
+        feature_names=feature_names,
         snapshot_required=snapshot_required,
         snapshot_features=snapshot_features,
         chunk_size=job.chunk_size,
@@ -316,22 +403,54 @@ def _build_symbol_cache_worker(job: _SymbolCacheJob) -> dict[str, Any]:
 
 def _load_symbol_decision_rows(source: FeaturePartsDataset, job: _SymbolCacheJob) -> pd.DataFrame:
     start, end = _decision_time_bounds(job.start, job.end)
-    rows = source.query_decision_rows(
-        universe=(job.symbol,),
-        start=start,
-        end=end,
-        stage=None,
-    )
+    stage_values = tuple(str(stage) for stage in (job.stages or ()) if str(stage))
+    stage_clause = "AND d.stage IN (SELECT UNNEST(?)) " if stage_values else ""
+    limit_clause = "LIMIT ? " if job.max_decisions is not None and int(job.max_decisions) > 0 else ""
+    params: list[object] = [start, end, [job.symbol]]
+    if stage_values:
+        params.append(list(stage_values))
+    if limit_clause:
+        params.append(int(job.max_decisions or 0))
+    with source.connect(symbols=(job.symbol,)) as conn:
+        rows = conn.execute(
+            "SELECT d.* FROM decisions d "
+            "WHERE d.decision_time >= ? AND d.decision_time <= ? "
+            "AND d.symbol IN (SELECT UNNEST(?)) "
+            f"{stage_clause}"
+            "ORDER BY d.decision_time, CASE d.stage WHEN 'open_auction' THEN 0 ELSE 1 END, d.symbol "
+            f"{limit_clause}",
+            params,
+        ).fetchdf()
+        if rows.empty:
+            return rows
+        rows["source_bar_end"] = pd.to_datetime(rows["source_bar_end"], errors="coerce")
+        source_bounds = rows["source_bar_end"].dropna()
+        if source_bounds.empty:
+            intraday = pd.DataFrame(columns=["symbol", "adjust", "bar_datetime", "volume", "amount"])
+        else:
+            intraday = conn.execute(
+                "SELECT symbol, adjust, bar_datetime, volume, amount FROM market_bars "
+                "WHERE symbol = ? AND freq = '5min' "
+                "AND bar_datetime >= ? AND bar_datetime <= ?",
+                [job.symbol, source_bounds.min(), source_bounds.max()],
+            ).fetchdf()
+        daily = conn.execute(
+            "SELECT symbol, adjust, bar_datetime, volume, amount FROM market_bars "
+            "WHERE symbol = ? AND freq = 'daily' "
+            "ORDER BY symbol, adjust, bar_datetime",
+            [job.symbol],
+        ).fetchdf()
+    rows = _attach_liquidity(rows, intraday=intraday, daily=daily)
     if rows.empty:
         return rows
     rows = rows.copy()
     rows["decision_time"] = pd.to_datetime(rows["decision_time"], errors="coerce")
-    if job.stages:
-        selected_stages = set(job.stages)
-        rows = rows.loc[rows["stage"].astype(str).isin(selected_stages)].copy()
-    rows = rows.sort_values(["decision_time", "stage", "symbol"]).reset_index(drop=True)
-    if job.max_decisions is not None and int(job.max_decisions) > 0:
-        rows = rows.head(int(job.max_decisions)).copy()
+    rows["_stage_order"] = rows["stage"].astype(str).map({"open_auction": 0, "bar_close": 1}).fillna(99)
+    rows = (
+        rows.sort_values(["decision_time", "_stage_order", "symbol"])
+        .drop(columns=["_stage_order"])
+        .reset_index(drop=True)
+    )
     return rows
 
 
@@ -422,35 +541,156 @@ def _compute_end_indices(features_frame: pd.DataFrame, freq_index: pd.DataFrame)
 def _fill_snapshot_features(
     source: FeaturePartsDataset,
     *,
+    decisions: pd.DataFrame,
+    index_rows: pd.DataFrame,
     decision_ids: list[str],
     frequencies: tuple[str, ...],
+    feature_names: dict[str, tuple[str, ...]],
     snapshot_required: dict[str, np.ndarray],
     snapshot_features: dict[str, np.ndarray],
     chunk_size: int,
 ) -> None:
     if not decision_ids:
         return
-    for offset in range(0, len(decision_ids), max(1, int(chunk_size))):
-        chunk_ids = decision_ids[offset : offset + max(1, int(chunk_size))]
-        requested_freqs = tuple(
-            freq
-            for freq in frequencies
-            if bool(snapshot_required[freq][offset : offset + len(chunk_ids)].any())
+    if not any(bool(values.any()) for values in snapshot_required.values()):
+        return
+
+    row_by_decision = {decision_id: index for index, decision_id in enumerate(decision_ids)}
+    source_symbols = source._symbols_for_decision_ids(decision_ids)  # noqa: SLF001 - cache build fast path.
+    if not source_symbols:
+        return
+    with source.connect(symbols=source_symbols) as conn:
+        spec = _spec_from_store(conn)
+        normalized_trade_freq = normalize_frequency(spec.trade_frequency)
+        full_decisions = conn.execute(
+            "SELECT * FROM decisions WHERE decision_id IN (SELECT UNNEST(?))",
+            [decision_ids],
+        ).fetchdf()
+        if full_decisions.empty:
+            raise KeyError("Cannot build snapshot features because decision rows are missing.")
+        full_decisions["decision_id"] = full_decisions["decision_id"].astype(str)
+        decision_lookup = {
+            str(row.decision_id): row
+            for row in full_decisions.itertuples(index=False)
+        }
+        base_lookup = _raw_day_lookup(
+            _load_market_bars_for_snapshots(conn, source_symbols, normalized_trade_freq)
         )
-        if not requested_freqs:
-            continue
-        batches = source.load_model_input_batches(decision_ids=chunk_ids, frequencies=requested_freqs)
-        for local_index, decision_id in enumerate(chunk_ids):
-            target_index = offset + local_index
-            batch = batches.get(decision_id)
-            if batch is None:
+        daily_lookup = _raw_symbol_lookup(
+            _load_market_bars_for_snapshots(conn, source_symbols, "daily")
+        )
+        raw_history = _load_snapshot_engine_inputs(conn, source_symbols, frequencies)
+        engines: dict[tuple[str, str, str], SnapshotFeatureEngine] = {}
+
+        for freq in frequencies:
+            if not bool(snapshot_required[freq].any()):
                 continue
-            for freq in requested_freqs:
-                if not bool(snapshot_required[freq][target_index]):
+            freq_index = index_rows.loc[index_rows["freq"].astype(str).eq(freq)].copy()
+            if freq_index.empty:
+                continue
+            freq_index["decision_id"] = freq_index["decision_id"].astype(str)
+            names = feature_names[freq]
+            grouped: dict[tuple[str, str], list[tuple[str, object, dict[str, Any]]]] = {}
+            missing: list[str] = []
+            for index_row in freq_index.itertuples(index=False):
+                decision_id = str(index_row.decision_id)
+                target_index = row_by_decision.get(decision_id)
+                if target_index is None or not bool(snapshot_required[freq][target_index]):
                     continue
-                sequence = batch.market_sequences.get(freq)
-                if sequence is not None and len(sequence):
-                    snapshot_features[freq][target_index] = np.asarray(sequence[-1], dtype=np.float32)
+                decision = decision_lookup.get(decision_id)
+                if decision is None:
+                    missing.append(decision_id)
+                    continue
+                decision_time = pd.Timestamp(decision.decision_time)
+                visible_bar_end = getattr(decision, "visible_bar_end", None)
+                cutoff = pd.Timestamp(visible_bar_end) if pd.notna(visible_bar_end) else decision_time
+                adjust = str(index_row.adjust)
+                raw = _fast_snapshot_row_from_arrays(
+                    decision,
+                    freq=freq,
+                    cutoff=cutoff,
+                    stable_end=(
+                        pd.Timestamp(index_row.stable_end_datetime)
+                        if pd.notna(index_row.stable_end_datetime)
+                        else None
+                    ),
+                    day_values=base_lookup.get((str(index_row.symbol), adjust, decision_time.normalize())),
+                    daily_values=daily_lookup.get((str(index_row.symbol), adjust)),
+                )
+                if raw is None:
+                    missing.append(decision_id)
+                    continue
+                grouped.setdefault((str(index_row.symbol), adjust), []).append((decision_id, index_row.stable_end_datetime, raw))
+            if missing:
+                raise ValueError(
+                    "Feature Dataset cannot materialize required snapshot features "
+                    f"for {freq}; missing decision_ids: {', '.join(missing[:10])}. "
+                    "Rebuild Feature Dataset after verifying raw bars for this frequency."
+                )
+            for (symbol, adjust), items in grouped.items():
+                engine_key = (symbol, freq, adjust)
+                engine = engines.get(engine_key)
+                if engine is None:
+                    times, raw_values = raw_history.get(
+                        (str(source_symbols[0]), freq, adjust),
+                        (np.empty(0, dtype=np.int64), np.empty((0, len(SNAPSHOT_RAW_COLUMNS)), dtype=np.float64)),
+                    )
+                    engine = SnapshotFeatureEngine(times, raw_values, spec=spec, freq=freq)
+                    engines[engine_key] = engine
+                built_matrix = engine.build(
+                    [item[1] for item in items],
+                    [item[2] for item in items],
+                    feature_names=names,
+                    as_matrix=True,
+                )
+                for row_index, (decision_id, _, _) in enumerate(items):
+                    target_index = row_by_decision[decision_id]
+                    snapshot_features[freq][target_index] = built_matrix[row_index]
+
+
+def _load_market_bars_for_snapshots(conn: Any, symbols: Iterable[str], freq: str) -> pd.DataFrame:
+    frame = conn.execute(
+        "SELECT * EXCLUDE (market_row_id) FROM market_bars "
+        "WHERE symbol IN (SELECT UNNEST(?)) AND freq = ? "
+        "ORDER BY symbol, adjust, bar_datetime",
+        [list(symbols), str(freq)],
+    ).fetchdf()
+    if frame.empty:
+        return pd.DataFrame(columns=["symbol", "datetime", "adjust", *SNAPSHOT_RAW_COLUMNS])
+    frame = frame.rename(columns={"bar_datetime": "datetime"}).copy()
+    frame["datetime"] = pd.to_datetime(frame["datetime"], errors="coerce")
+    return frame
+
+
+def _load_snapshot_engine_inputs(
+    conn: Any,
+    symbols: Iterable[str],
+    frequencies: Iterable[str],
+) -> dict[tuple[str, str, str], tuple[np.ndarray, np.ndarray]]:
+    frame = conn.execute(
+        "SELECT * EXCLUDE (market_row_id) FROM market_bars "
+        "WHERE symbol IN (SELECT UNNEST(?)) AND freq IN (SELECT UNNEST(?)) "
+        "ORDER BY symbol, freq, adjust, bar_datetime",
+        [list(symbols), list(frequencies)],
+    ).fetchdf()
+    if frame.empty:
+        return {}
+    frame["bar_datetime"] = pd.to_datetime(frame["bar_datetime"], errors="coerce")
+    frame = frame.dropna(subset=["bar_datetime"]).copy()
+    for column in SNAPSHOT_RAW_COLUMNS:
+        if column not in frame:
+            frame[column] = 1.0 if column == "progress" else np.nan
+    result: dict[tuple[str, str, str], tuple[np.ndarray, np.ndarray]] = {}
+    for (symbol, freq, adjust), group in frame.groupby(["symbol", "freq", "adjust"], sort=False):
+        ordered = group.sort_values("bar_datetime")
+        times = ordered["bar_datetime"].to_numpy(dtype="datetime64[ns]").view(np.int64)
+        raw = (
+            ordered[list(SNAPSHOT_RAW_COLUMNS)]
+            .apply(pd.to_numeric, errors="coerce")
+            .to_numpy(dtype=np.float64, copy=True)
+        )
+        result[(str(symbol), str(freq), str(adjust))] = (times, raw)
+    return result
 
 
 def _decision_time_bounds(start_value: str | None, end_value: str | None) -> tuple[pd.Timestamp, pd.Timestamp]:

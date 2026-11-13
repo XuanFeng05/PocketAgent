@@ -1,0 +1,13 @@
+{
+  "mode": "batch",
+  "source_type": "demo",
+  "strategy": "sma_trend",
+  "parameter_grid": {
+    "fast_window": [3, 5],
+    "slow_window": [15, 20]
+  },
+  "selection_metric": "total_return",
+  "max_candidates": 64,
+  "max_backtests": 512,
+  "max_bar_evaluations": 2000000
+}

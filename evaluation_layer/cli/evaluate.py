@@ -53,6 +53,7 @@ def main() -> int:
         start=start,
         end=end,
         execution_config=ExecutionConfig(**payload["execution_config"]),
+        enforce_action_contract=True,
     )
     result = evaluate_policy(
         environment,

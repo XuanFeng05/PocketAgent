@@ -15,6 +15,8 @@ from agent_layer.models import (
     observation_state_to_tensors,
 )
 from evaluation_layer.metrics import portfolio_metrics
+from evaluation_layer.backtest.valuation import execution_valuation
+from evaluation_layer.backtest.baseline import buy_hold_baseline
 
 
 @dataclass(frozen=True)
@@ -84,10 +86,12 @@ def evaluate_policy(
             deterministic=deterministic,
             **state_tensors,
         )
+        direction_cpu = action.directions.squeeze(0).detach().cpu()
+        size_cpu = action.sizes.squeeze(0).detach().cpu()
         next_observation, _, terminated, truncated, info = environment.step(
             PortfolioAction(
-                action.directions.squeeze(0).detach().cpu().numpy(),
-                action.sizes.squeeze(0).detach().cpu().numpy(),
+                direction_cpu.numpy(),
+                size_cpu.numpy(),
             )
         )
         execution = info.get("execution")
@@ -95,9 +99,8 @@ def evaluate_policy(
             turnover += float(execution.turnover_value)
             orders += len(execution.executed_fills)
             blocked_orders += sum(fill.status == "blocked" for fill in execution.fills)
-        daily_values[observation.market.decision_time.normalize()] = float(
-            info["net_asset_value"]
-        )
+        snapshot = execution_valuation(info)
+        daily_values[pd.Timestamp(snapshot["time"]).normalize()] = snapshot["nav"]
         steps += 1
         if progress_callback:
             progress_callback(steps, total_steps)
@@ -126,7 +129,12 @@ from pathlib import Path
 from time import perf_counter
 
 from agent_layer.experiments import load_agent_checkpoint
-from agent_layer.data import AgentTimelineLoader, AgentMarketStep, open_agent_timeline_loader
+from agent_layer.data import (
+    AgentMarketStep,
+    AgentTimelineLoader,
+    FeaturePartsDataset,
+    open_agent_timeline_loader,
+)
 
 
 @torch.inference_mode()
@@ -138,7 +146,8 @@ def run_policy_replay_to_files(
     symbol: str,
     start: str,
     end: str,
-    execution_config: ExecutionConfig,
+    execution_config: ExecutionConfig | None = None,
+    execution_overrides: dict[str, Any] | None = None,
     device: str | torch.device = "cpu",
     deterministic: bool = True,
     stages: tuple[str, ...] | None = None,
@@ -159,6 +168,10 @@ def run_policy_replay_to_files(
 
     target = torch.device(device)
     model, checkpoint_payload = load_agent_checkpoint(model_path, map_location="cpu")
+    if execution_config is None:
+        execution_config = ExecutionConfig(**{
+            **checkpoint_payload.get("execution_config", {}), **(execution_overrides or {}),
+        })
     loader = open_agent_timeline_loader(
         dataset_dir,
         universe=(str(symbol).upper(),),
@@ -181,6 +194,7 @@ def run_policy_replay_to_files(
         end=end,
         stages=stages,
         execution_config=execution_config,
+        enforce_action_contract=True,
     )
     daily_bars_by_date = _daily_bars_by_date(loader, symbol=str(symbol).upper(), start=start, end=end)
     decision_bars_by_id = _decision_bars_by_id(loader, symbol=str(symbol).upper(), start=start, end=end)
@@ -225,37 +239,27 @@ def run_policy_replay_to_files(
             )
             action = model._action_from_evaluation(evaluation, deterministic=deterministic)
             direction_probs = torch.softmax(evaluation.direction_logits.detach(), dim=-1).squeeze(0).cpu().numpy()
+            direction_cpu = action.directions.squeeze(0).detach().cpu()
+            size_cpu = action.sizes.squeeze(0).detach().cpu()
             action_payload = PortfolioAction(
-                action.directions.squeeze(0).detach().cpu().numpy(),
-                action.sizes.squeeze(0).detach().cpu().numpy(),
+                direction_cpu.numpy(),
+                size_cpu.numpy(),
             )
             index = _symbol_index(market, target_symbol)
             raw_direction = int(action_payload.directions[index]) if index is not None else 0
             raw_size = float(action_payload.sizes[index]) if index is not None else 0.0
             raw_action = _action_name(raw_direction)
-            is_last_bar = event_count >= total_steps - 1
-            synthetic_fills: list[dict[str, Any]] = []
             execution_action = action_payload
-            if is_last_bar:
-                execution_action = PortfolioAction.hold(len(market.symbols))
-                if index is not None and raw_direction != 0:
-                    synthetic_fills.append(_blocked_action_payload(
-                        symbol=target_symbol,
-                        side=raw_action,
-                        size=raw_size,
-                        market=market,
-                        index=index,
-                        reason="last_bar",
-                    ))
             if raw_action != "hold":
                 total_actions += 1
             next_observation, reward, terminated, truncated, info = environment.step(execution_action)
+            snapshot = execution_valuation(info)
             execution = info.get("execution")
-            fill_events: list[dict[str, Any]] = list(synthetic_fills)
+            fill_events: list[dict[str, Any]] = []
             if execution is not None:
                 turnover += float(execution.turnover_value)
                 for fill in execution.fills:
-                    fill_payload = _fill_payload(fill, environment.account.net_asset_value)
+                    fill_payload = _fill_payload(fill, snapshot["nav"])
                     fill_events.append(fill_payload)
                     if fill.status == "filled":
                         orders += 1
@@ -270,13 +274,7 @@ def run_policy_replay_to_files(
                             blocked_buys += 1
                         elif fill_payload.get("side") == "sell":
                             blocked_sells += 1
-            for fill_payload in synthetic_fills:
-                blocked_orders += 1
-                if fill_payload.get("side") == "buy":
-                    blocked_buys += 1
-                elif fill_payload.get("side") == "sell":
-                    blocked_sells += 1
-            nav = float(info["net_asset_value"])
+            nav = snapshot["nav"]
             nav_values.append(nav)
             peak_nav = max(peak_nav, nav)
             drawdown = 1.0 - nav / peak_nav if peak_nav > 0 else 0.0
@@ -317,7 +315,9 @@ def run_policy_replay_to_files(
                     "fills": fill_events,
                     **execution_summary,
                 },
-                "account": _account_payload(environment.account, target_symbol),
+                "account": snapshot["accounts"][target_symbol],
+                "valuation_time": _iso(snapshot["time"]),
+                "next_valuation_time": _iso(info["valuation_time"]),
                 "performance": {
                     "initial_nav": initial_nav,
                     "nav": nav,
@@ -389,6 +389,9 @@ def run_policy_replay_to_files(
         trades=trades,
         actions=actions,
         steps=event_count,
+        baseline=buy_hold_baseline(loader, symbol=target_symbol, start=start, end=end,
+                                   initial_nav=initial_nav, execution_config=execution_config, stages=stages,
+                                   cancel_check=cancel_check),
     )
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     return summary
@@ -401,7 +404,7 @@ def _daily_bars_by_date(
     start: str,
     end: str,
 ) -> dict[Any, dict[str, Any]]:
-    source = getattr(loader, "_parts_source", None)
+    source = _feature_parts_source(loader)
     if source is None:
         return {}
     try:
@@ -433,6 +436,16 @@ def _daily_bars_by_date(
             "pctChg": _safe_float(row.pctChg),
         }
     return result
+
+
+def _feature_parts_source(loader: AgentTimelineLoader) -> FeaturePartsDataset | None:
+    source = getattr(loader, "_parts_source", None)
+    if source is not None:
+        return source
+    reader = getattr(loader, "reader", None)
+    manifest = getattr(reader, "manifest", None)
+    source_dir = str(getattr(manifest, "source_feature_dir", "") or "").strip()
+    return FeaturePartsDataset.maybe(source_dir) if source_dir else None
 
 
 def _decision_bars_by_id(
@@ -502,9 +515,17 @@ def _summary_payload(
     trades: list[dict[str, Any]],
     actions: list[dict[str, Any]],
     steps: int,
+    baseline: dict[str, Any],
 ) -> dict[str, Any]:
+    daily_nav = _daily_nav_values(equity_curve)
     try:
-        metrics = portfolio_metrics(nav_values, initial_nav=None, turnover_value=turnover, total_fees=total_fees)
+        metrics = portfolio_metrics(
+            daily_nav,
+            initial_nav=initial_nav,
+            turnover_value=turnover,
+            total_fees=total_fees,
+        )
+        metrics["intraday_maximum_drawdown"] = _maximum_drawdown(nav_values)
     except Exception:
         metrics = {
             "initial_nav": initial_nav,
@@ -515,10 +536,10 @@ def _summary_payload(
             "calmar": 0.0,
             "total_fees": total_fees,
         }
-    baseline = _buy_hold_baseline(bars, initial_nav)
     return {
         "metrics": metrics,
         "baseline": baseline,
+        "price_return_reference": _price_return_reference(bars, initial_nav),
         "total_actions": total_actions,
         "executed_trades": orders,
         "blocked_actions": blocked_orders,
@@ -536,7 +557,29 @@ def _summary_payload(
     }
 
 
-def _buy_hold_baseline(bars: dict[Any, dict[str, Any]], initial_nav: float) -> dict[str, Any]:
+def _daily_nav_values(equity_curve: list[dict[str, Any]]) -> list[float]:
+    values_by_date: dict[pd.Timestamp, float] = {}
+    for row in equity_curve:
+        try:
+            date = pd.Timestamp(row["time"]).normalize()
+            nav = float(row["nav"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if pd.isna(date) or not np.isfinite(nav) or nav <= 0:
+            continue
+        values_by_date[date] = nav
+    return [values_by_date[date] for date in sorted(values_by_date)]
+
+
+def _maximum_drawdown(nav_values: list[float]) -> float:
+    nav = np.asarray(nav_values, dtype=np.float64)
+    if nav.ndim != 1 or nav.size == 0 or not np.isfinite(nav).all() or np.any(nav <= 0):
+        return 0.0
+    running_peak = np.maximum.accumulate(nav)
+    return float(-(nav / running_peak - 1.0).min())
+
+
+def _price_return_reference(bars: dict[Any, dict[str, Any]], initial_nav: float) -> dict[str, Any]:
     ordered = [item for _, item in sorted(bars.items(), key=lambda pair: str(pair[0]))]
     prices = [float(item.get("close") or 0.0) for item in ordered if float(item.get("close") or 0.0) > 0]
     if len(prices) < 2:

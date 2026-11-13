@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 import numpy as np
 import torch
 from torch import Tensor, nn
-from torch.distributions import Beta, Categorical
+from torch.distributions import Beta, Categorical, Normal
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from agent_layer.environment import AgentObservation
+
+_SIZE_EPSILON = 1e-6
+_SIZE_CONCENTRATION_MIN = 1.0 + 1e-4
+_SIZE_CONCENTRATION_MAX = 100.0
+_LOGIT_NORMAL_LOC_MIN = -12.0
+_LOGIT_NORMAL_LOC_MAX = 12.0
+_LOGIT_NORMAL_SCALE_MIN = 0.05
+_LOGIT_NORMAL_SCALE_MAX = 5.0
 
 
 @dataclass(frozen=True)
@@ -25,13 +33,14 @@ class MultiFrequencyMAPPOConfig:
     runtime_embedding_size: int = 32
     local_state_size: int = 128
     global_state_size: int = 128
+    size_distribution: str = "beta"
     # PPO re-evaluates rollout actions during optimization. Keeping dropout at
     # zero makes those likelihood ratios deterministic while allowing cuDNN
     # LSTMs to remain in training mode for backward passes.
     dropout: float = 0.0
 
     @classmethod
-    def from_observation(cls, observation: AgentObservation) -> "MultiFrequencyMAPPOConfig":
+    def from_observation(cls, observation: AgentObservation) -> MultiFrequencyMAPPOConfig:
         return cls(
             frequency_channels={
                 freq: int(values.shape[-1])
@@ -59,6 +68,8 @@ class PolicyEvaluation:
     direction_logits: Tensor
     size_alpha: Tensor
     size_beta: Tensor
+    buy_min_size: Tensor
+    sell_min_size: Tensor
 
 
 class FrequencySequenceEncoder(nn.Module):
@@ -128,6 +139,8 @@ class MultiFrequencyMAPPO(nn.Module):
         super().__init__()
         if not config.frequency_channels:
             raise ValueError("At least one market frequency is required.")
+        if config.size_distribution not in {"beta", "logit_normal"}:
+            raise ValueError("Size distribution must be beta or logit_normal.")
         self.config = config
         self.frequencies = tuple(config.frequency_channels)
         self.frequency_encoders = nn.ModuleDict(
@@ -195,6 +208,8 @@ class MultiFrequencyMAPPO(nn.Module):
         active_mask: Tensor,
         can_buy: Tensor,
         can_sell: Tensor,
+        buy_min_size: Tensor,
+        sell_min_size: Tensor,
     ) -> PolicyEvaluation:
         market_state = self.encode_market(
             market_sequences=market_sequences,
@@ -207,6 +222,8 @@ class MultiFrequencyMAPPO(nn.Module):
             active_mask=active_mask,
             can_buy=can_buy,
             can_sell=can_sell,
+            buy_min_size=buy_min_size,
+            sell_min_size=sell_min_size,
         )
 
     def encode_market(
@@ -233,6 +250,8 @@ class MultiFrequencyMAPPO(nn.Module):
         active_mask: Tensor,
         can_buy: Tensor,
         can_sell: Tensor,
+        buy_min_size: Tensor,
+        sell_min_size: Tensor,
     ) -> PolicyEvaluation:
         context_state = self.context_encoder(decision_context)
         runtime_state_encoded = self.runtime_encoder(runtime_state)
@@ -248,15 +267,25 @@ class MultiFrequencyMAPPO(nn.Module):
             can_buy=can_buy.bool(),
             can_sell=can_sell.bool(),
         )
-        size_parameters = torch.nn.functional.softplus(self.size_head(actor_state)) + 1.0
+        size_logits = torch.nan_to_num(
+            self.size_head(actor_state),
+            nan=0.0,
+            posinf=20.0,
+            neginf=-20.0,
+        )
+        size_alpha, size_beta = self._size_parameters(size_logits)
+        safe_buy_min_size = self._safe_minimum_size(buy_min_size)
+        safe_sell_min_size = self._safe_minimum_size(sell_min_size)
         value = self.critic(global_state).squeeze(-1)
         return PolicyEvaluation(
             log_prob=torch.empty(0, device=value.device),
             entropy=torch.empty(0, device=value.device),
             value=value,
             direction_logits=direction_logits,
-            size_alpha=size_parameters[..., 0],
-            size_beta=size_parameters[..., 1],
+            size_alpha=size_alpha,
+            size_beta=size_beta,
+            buy_min_size=safe_buy_min_size,
+            sell_min_size=safe_sell_min_size,
         )
 
     @torch.no_grad()
@@ -285,27 +314,45 @@ class MultiFrequencyMAPPO(nn.Module):
         deterministic: bool,
     ) -> PolicyAction:
         direction_dist = Categorical(logits=evaluation.direction_logits)
-        size_dist = Beta(evaluation.size_alpha, evaluation.size_beta)
+        size_alpha, size_beta = self._safe_size_parameters(evaluation.size_alpha, evaluation.size_beta)
         direction_index = (
             evaluation.direction_logits.argmax(dim=-1)
             if deterministic
             else direction_dist.sample()
         )
-        sizes = (
-            evaluation.size_alpha / (evaluation.size_alpha + evaluation.size_beta)
+        base_sizes = (
+            self._deterministic_size(size_alpha, size_beta)
             if deterministic
-            else size_dist.sample()
+            else self._sample_size(size_alpha, size_beta)
         )
+        base_sizes = self._clamp_size(base_sizes)
         directions = direction_index.to(torch.int8) - 1
         non_hold = directions.ne(0)
+        minimum_sizes = self._minimum_size_for_direction(
+            directions,
+            buy_min_size=evaluation.buy_min_size,
+            sell_min_size=evaluation.sell_min_size,
+        )
+        sizes = self._scale_size(base_sizes, minimum_sizes)
         sizes = torch.where(non_hold, sizes, torch.zeros_like(sizes))
         log_prob = direction_dist.log_prob(direction_index)
         log_prob = log_prob + torch.where(
             non_hold,
-            size_dist.log_prob(sizes.clamp(1e-6, 1.0 - 1e-6)),
+            self._scaled_size_log_prob(
+                sizes,
+                size_alpha,
+                size_beta,
+                minimum_sizes,
+            ),
             torch.zeros_like(log_prob),
         )
-        entropy = self._hybrid_entropy(direction_dist, size_dist)
+        entropy = self._hybrid_entropy(
+            direction_dist,
+            size_alpha,
+            size_beta,
+            buy_min_size=evaluation.buy_min_size,
+            sell_min_size=evaluation.sell_min_size,
+        )
         return PolicyAction(directions, sizes, log_prob, evaluation.value, entropy)
 
     def evaluate_actions(
@@ -317,22 +364,40 @@ class MultiFrequencyMAPPO(nn.Module):
     ) -> PolicyEvaluation:
         evaluation = self.forward(**inputs)
         direction_dist = Categorical(logits=evaluation.direction_logits)
-        size_dist = Beta(evaluation.size_alpha, evaluation.size_beta)
+        size_alpha, size_beta = self._safe_size_parameters(evaluation.size_alpha, evaluation.size_beta)
         direction_index = directions.to(torch.long) + 1
         non_hold = directions.ne(0)
+        minimum_sizes = self._minimum_size_for_direction(
+            directions,
+            buy_min_size=evaluation.buy_min_size,
+            sell_min_size=evaluation.sell_min_size,
+        )
         log_prob = direction_dist.log_prob(direction_index)
         log_prob = log_prob + torch.where(
             non_hold,
-            size_dist.log_prob(sizes.clamp(1e-6, 1.0 - 1e-6)),
+            self._scaled_size_log_prob(
+                sizes,
+                size_alpha,
+                size_beta,
+                minimum_sizes,
+            ),
             torch.zeros_like(log_prob),
         )
         return PolicyEvaluation(
             log_prob=log_prob,
-            entropy=self._hybrid_entropy(direction_dist, size_dist),
+            entropy=self._hybrid_entropy(
+                direction_dist,
+                size_alpha,
+                size_beta,
+                buy_min_size=evaluation.buy_min_size,
+                sell_min_size=evaluation.sell_min_size,
+            ),
             value=evaluation.value,
             direction_logits=evaluation.direction_logits,
-            size_alpha=evaluation.size_alpha,
-            size_beta=evaluation.size_beta,
+            size_alpha=size_alpha,
+            size_beta=size_beta,
+            buy_min_size=evaluation.buy_min_size,
+            sell_min_size=evaluation.sell_min_size,
         )
 
     def _global_pool(self, local_state: Tensor, active_mask: Tensor) -> Tensor:
@@ -360,10 +425,242 @@ class MultiFrequencyMAPPO(nn.Module):
         result[..., 1] = torch.where(active_mask, result[..., 1], torch.zeros_like(result[..., 1]))
         return result
 
+    def _size_parameters(self, logits: Tensor) -> tuple[Tensor, Tensor]:
+        if self.config.size_distribution == "logit_normal":
+            location = logits[..., 0]
+            scale = torch.nn.functional.softplus(logits[..., 1]) + _LOGIT_NORMAL_SCALE_MIN
+            return self._safe_logit_normal_parameters(location, scale)
+        parameters = torch.nn.functional.softplus(logits) + 1.0
+        return self._safe_beta_parameters(parameters[..., 0], parameters[..., 1])
+
+    def _safe_size_parameters(self, first: Tensor, second: Tensor) -> tuple[Tensor, Tensor]:
+        if self.config.size_distribution == "logit_normal":
+            return self._safe_logit_normal_parameters(first, second)
+        return self._safe_beta_parameters(first, second)
+
+    def _deterministic_size(self, first: Tensor, second: Tensor) -> Tensor:
+        if self.config.size_distribution == "logit_normal":
+            return self._clamp_size(torch.sigmoid(first))
+        return first / (first + second)
+
+    def _sample_size(self, first: Tensor, second: Tensor) -> Tensor:
+        if self.config.size_distribution == "logit_normal":
+            return self._sample_logit_normal(first, second)
+        return self._sample_beta(first, second)
+
+    def _size_log_prob(self, values: Tensor, first: Tensor, second: Tensor) -> Tensor:
+        if self.config.size_distribution == "logit_normal":
+            return self._logit_normal_log_prob(values, first, second)
+        return self._beta_log_prob(values, first, second)
+
     @staticmethod
-    def _hybrid_entropy(direction_dist: Categorical, size_dist: Beta) -> Tensor:
-        non_hold_probability = 1.0 - direction_dist.probs[..., 1]
-        return direction_dist.entropy() + non_hold_probability * size_dist.entropy()
+    def _safe_minimum_size(values: Tensor) -> Tensor:
+        return torch.nan_to_num(
+            values,
+            nan=1.0,
+            posinf=1.0,
+            neginf=0.0,
+        ).clamp(0.0, 1.0)
+
+    @classmethod
+    def _minimum_size_for_direction(
+        cls,
+        directions: Tensor,
+        *,
+        buy_min_size: Tensor,
+        sell_min_size: Tensor,
+    ) -> Tensor:
+        buy_minimum = cls._safe_minimum_size(buy_min_size)
+        sell_minimum = cls._safe_minimum_size(sell_min_size)
+        return torch.where(
+            directions.gt(0),
+            buy_minimum,
+            torch.where(directions.lt(0), sell_minimum, torch.zeros_like(buy_minimum)),
+        )
+
+    @classmethod
+    def _scale_size(cls, base_values: Tensor, minimum_sizes: Tensor) -> Tensor:
+        base = cls._clamp_size(base_values)
+        minimum = cls._safe_minimum_size(minimum_sizes)
+        return minimum + (1.0 - minimum) * base
+
+    def _scaled_size_log_prob(
+        self,
+        values: Tensor,
+        first: Tensor,
+        second: Tensor,
+        minimum_sizes: Tensor,
+    ) -> Tensor:
+        minimum = self._safe_minimum_size(minimum_sizes)
+        raw_scale = 1.0 - minimum
+        scale = raw_scale.clamp(min=_SIZE_EPSILON)
+        base_values = self._clamp_size((values - minimum) / scale)
+        transformed_log_prob = self._size_log_prob(base_values, first, second) - torch.log(scale)
+        # When the account can execute exactly one lot and no larger order, the
+        # size choice is a point mass at 1.0.  It contributes no continuous
+        # log-probability (and no entropy) to the hybrid action distribution.
+        log_prob = torch.where(
+            raw_scale <= _SIZE_EPSILON,
+            torch.zeros_like(transformed_log_prob),
+            transformed_log_prob,
+        )
+        below_minimum = values < minimum - 1e-6
+        return torch.where(
+            below_minimum,
+            torch.full_like(log_prob, -50.0),
+            log_prob,
+        )
+
+    @staticmethod
+    def _safe_beta_parameters(alpha: Tensor, beta: Tensor) -> tuple[Tensor, Tensor]:
+        safe_alpha = torch.nan_to_num(
+            alpha,
+            nan=1.0,
+            posinf=_SIZE_CONCENTRATION_MAX,
+            neginf=_SIZE_CONCENTRATION_MIN,
+        ).clamp(_SIZE_CONCENTRATION_MIN, _SIZE_CONCENTRATION_MAX)
+        safe_beta = torch.nan_to_num(
+            beta,
+            nan=1.0,
+            posinf=_SIZE_CONCENTRATION_MAX,
+            neginf=_SIZE_CONCENTRATION_MIN,
+        ).clamp(_SIZE_CONCENTRATION_MIN, _SIZE_CONCENTRATION_MAX)
+        return safe_alpha, safe_beta
+
+    @staticmethod
+    def _safe_logit_normal_parameters(location: Tensor, scale: Tensor) -> tuple[Tensor, Tensor]:
+        safe_location = torch.nan_to_num(
+            location,
+            nan=0.0,
+            posinf=_LOGIT_NORMAL_LOC_MAX,
+            neginf=_LOGIT_NORMAL_LOC_MIN,
+        ).clamp(_LOGIT_NORMAL_LOC_MIN, _LOGIT_NORMAL_LOC_MAX)
+        safe_scale = torch.nan_to_num(
+            scale,
+            nan=1.0,
+            posinf=_LOGIT_NORMAL_SCALE_MAX,
+            neginf=_LOGIT_NORMAL_SCALE_MIN,
+        ).clamp(_LOGIT_NORMAL_SCALE_MIN, _LOGIT_NORMAL_SCALE_MAX)
+        return safe_location, safe_scale
+
+    @staticmethod
+    def _clamp_size(values: Tensor) -> Tensor:
+        return torch.nan_to_num(
+            values,
+            nan=0.5,
+            posinf=1.0 - _SIZE_EPSILON,
+            neginf=_SIZE_EPSILON,
+        ).clamp(_SIZE_EPSILON, 1.0 - _SIZE_EPSILON)
+
+    @staticmethod
+    def _sample_beta(alpha: Tensor, beta: Tensor) -> Tensor:
+        if alpha.is_cuda or beta.is_cuda:
+            samples = Beta(alpha.detach().cpu(), beta.detach().cpu()).sample()
+            return samples.to(device=alpha.device, dtype=alpha.dtype)
+        return Beta(alpha, beta).sample()
+
+    @classmethod
+    def _sample_logit_normal(cls, location: Tensor, scale: Tensor) -> Tensor:
+        safe_location, safe_scale = cls._safe_logit_normal_parameters(location, scale)
+        samples = Normal(safe_location, safe_scale).sample()
+        return cls._clamp_size(torch.sigmoid(samples))
+
+    @classmethod
+    def _logit_normal_log_prob(cls, values: Tensor, location: Tensor, scale: Tensor) -> Tensor:
+        safe_values = cls._clamp_size(values)
+        safe_location, safe_scale = cls._safe_logit_normal_parameters(location, scale)
+        logits = torch.logit(safe_values)
+        log_prob = Normal(safe_location, safe_scale).log_prob(logits)
+        log_prob = log_prob - torch.log(safe_values) - torch.log1p(-safe_values)
+        return torch.nan_to_num(log_prob, nan=0.0, posinf=50.0, neginf=-50.0)
+
+    @classmethod
+    def _beta_log_prob(cls, values: Tensor, alpha: Tensor, beta: Tensor) -> Tensor:
+        safe_values = cls._clamp_size(values)
+        safe_alpha, safe_beta = cls._safe_beta_parameters(alpha, beta)
+        if safe_values.is_cuda or safe_alpha.is_cuda or safe_beta.is_cuda:
+            log_prob = cls._beta_log_prob_impl(
+                safe_values.cpu(),
+                safe_alpha.cpu(),
+                safe_beta.cpu(),
+            )
+            return log_prob.to(device=values.device, dtype=values.dtype)
+        return cls._beta_log_prob_impl(safe_values, safe_alpha, safe_beta)
+
+    @staticmethod
+    def _beta_log_prob_impl(values: Tensor, alpha: Tensor, beta: Tensor) -> Tensor:
+        log_norm = (
+            torch.lgamma(alpha)
+            + torch.lgamma(beta)
+            - torch.lgamma(alpha + beta)
+        )
+        log_prob = (
+            (alpha - 1.0) * torch.log(values)
+            + (beta - 1.0) * torch.log1p(-values)
+            - log_norm
+        )
+        return torch.nan_to_num(log_prob, nan=0.0, posinf=50.0, neginf=-50.0)
+
+    @staticmethod
+    def _beta_entropy(alpha: Tensor, beta: Tensor) -> Tensor:
+        safe_alpha, safe_beta = MultiFrequencyMAPPO._safe_beta_parameters(alpha, beta)
+        if safe_alpha.is_cuda or safe_beta.is_cuda:
+            entropy = MultiFrequencyMAPPO._beta_entropy_impl(safe_alpha.cpu(), safe_beta.cpu())
+            return entropy.to(device=alpha.device, dtype=alpha.dtype)
+        return MultiFrequencyMAPPO._beta_entropy_impl(safe_alpha, safe_beta)
+
+    @staticmethod
+    def _beta_entropy_impl(alpha: Tensor, beta: Tensor) -> Tensor:
+        total = alpha + beta
+        log_norm = torch.lgamma(alpha) + torch.lgamma(beta) - torch.lgamma(total)
+        entropy = (
+            log_norm
+            - (alpha - 1.0) * torch.digamma(alpha)
+            - (beta - 1.0) * torch.digamma(beta)
+            + (total - 2.0) * torch.digamma(total)
+        )
+        return torch.nan_to_num(entropy, nan=0.0, posinf=0.0, neginf=0.0)
+
+    @staticmethod
+    def _logit_normal_entropy(location: Tensor, scale: Tensor) -> Tensor:
+        safe_location, safe_scale = MultiFrequencyMAPPO._safe_logit_normal_parameters(location, scale)
+        del safe_location
+        entropy = Normal(torch.zeros_like(safe_scale), safe_scale).entropy()
+        return torch.nan_to_num(entropy, nan=0.0, posinf=0.0, neginf=0.0)
+
+    def _size_entropy(self, first: Tensor, second: Tensor) -> Tensor:
+        if self.config.size_distribution == "logit_normal":
+            return self._logit_normal_entropy(first, second)
+        return self._beta_entropy(first, second)
+
+    def _hybrid_entropy(
+        self,
+        direction_dist: Categorical,
+        size_alpha: Tensor,
+        size_beta: Tensor,
+        *,
+        buy_min_size: Tensor,
+        sell_min_size: Tensor,
+    ) -> Tensor:
+        base_entropy = self._size_entropy(size_alpha, size_beta)
+
+        def transformed_entropy(minimum_size: Tensor) -> Tensor:
+            scale = 1.0 - self._safe_minimum_size(minimum_size)
+            continuous = base_entropy + torch.log(scale.clamp(min=_SIZE_EPSILON))
+            return torch.where(
+                scale <= _SIZE_EPSILON,
+                torch.zeros_like(continuous),
+                continuous,
+            )
+
+        probabilities = direction_dist.probs
+        sell_entropy = transformed_entropy(sell_min_size)
+        buy_entropy = transformed_entropy(buy_min_size)
+        return (
+            direction_dist.entropy()
+            + probabilities[..., 0] * sell_entropy
+            + probabilities[..., 2] * buy_entropy
+        )
 
 
 def observation_to_tensors(
@@ -420,6 +717,15 @@ def observation_state_to_tensors(
     can_sell_index = runtime_names.get("can_sell")
     if can_buy_index is None or can_sell_index is None:
         raise ValueError("Runtime contract must contain can_buy and can_sell.")
+    buy_mask_index = runtime_names.get("can_buy_one_lot", can_buy_index)
+    sell_mask_index = runtime_names.get("can_sell_one_lot", can_sell_index)
+    buy_required_index = runtime_names.get("buy_one_lot_required_ratio")
+    sell_required_index = runtime_names.get("sell_one_lot_required_ratio")
+    if buy_required_index is None or sell_required_index is None:
+        raise ValueError(
+            "Runtime contract must contain buy_one_lot_required_ratio and "
+            "sell_one_lot_required_ratio."
+        )
     runtime = torch.as_tensor(observation.runtime_state, dtype=torch.float32, device=target)
     return {
         "decision_context": torch.as_tensor(
@@ -429,6 +735,8 @@ def observation_state_to_tensors(
         "active_mask": torch.as_tensor(
             market.active_mask, dtype=torch.bool, device=target
         ).unsqueeze(0),
-        "can_buy": runtime[:, can_buy_index].gt(0.5).unsqueeze(0),
-        "can_sell": runtime[:, can_sell_index].gt(0.5).unsqueeze(0),
+        "can_buy": runtime[:, buy_mask_index].gt(0.5).unsqueeze(0),
+        "can_sell": runtime[:, sell_mask_index].gt(0.5).unsqueeze(0),
+        "buy_min_size": runtime[:, buy_required_index].unsqueeze(0),
+        "sell_min_size": runtime[:, sell_required_index].unsqueeze(0),
     }

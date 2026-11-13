@@ -31,6 +31,13 @@ assembled tensors without loading the full history into memory. Validation
 also batches the static four-frequency LSTM encoding for each prefetched chunk;
 portfolio state, actions, and execution remain strictly sequential.
 
+The optional Agent tensor cache uses manifest contract version 3. Each cache is
+bound to the selected Feature Parts build signature and per-symbol source
+fingerprints, must contain every symbol requested by its build, and is checked
+for matching parquet row counts and array shapes before use. Version 2 caches
+are intentionally rejected and must be rebuilt; a schema match alone is not
+sufficient proof that a derived cache still belongs to the selected dataset.
+
 The dashboard defaults to a five-symbol, 128-step smoke run. This only verifies
 the data, CUDA, PPO, validation, and checkpoint pipeline. Formal experiments
 must explicitly select the intended universe and validation horizon.
@@ -80,6 +87,9 @@ Market constraints are authoritative inputs from Feature Layer. Agent code
 must combine `market_can_buy` / `market_can_sell` with cash, position, lot-size,
 and T+1 account state. It must not independently infer ST status or recalculate
 price limits. ST days block new positions but do not prevent a legal exit.
+Single-symbol runs default to no inherited portfolio-allocation cap
+(`max_position_ratio = 1.0`); position size remains bounded by cash, liquidity,
+lot size, fees, and the market/account constraints above.
 
 ## Boundaries
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 from datetime import datetime, timezone
+import faulthandler
 import gc
 import json
 import os
@@ -14,6 +15,7 @@ from time import perf_counter
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
 
 from agent_layer.data import AgentTimelineLoader, open_agent_timeline_loader
@@ -27,7 +29,13 @@ from agent_layer.experiments import (
     save_agent_checkpoint,
 )
 from agent_layer.models import SingleSymbolMultiFrequencyPolicy, SingleSymbolMultiFrequencyPolicyConfig
-from agent_layer.training import PPOTrainer, TrainingCancelled, TrainingSummary
+from agent_layer.training import (
+    DistributedTrainingContext,
+    PPOTrainer,
+    TrainingCancelled,
+    TrainingSummary,
+)
+from agent_layer.training.subprocess_vector_env import SubprocessEnvSpec, SubprocessVectorEnv
 
 
 class AgentTrainingWorker:
@@ -36,10 +44,18 @@ class AgentTrainingWorker:
         self.run_id = self.run_dir.name
         self.store = AgentRunStore(self.run_dir.parent)
         self.config = agent_run_config_from_payload(self.store.read_config(self.run_id))
+        self.distributed = DistributedTrainingContext.initialize(
+            strategy=self.config.distributed.strategy,
+            requested_device=self.config.device,
+            backend=self.config.distributed.backend,
+            cpu_threads_per_process=self.config.distributed.cpu_threads_per_process,
+            timeout_seconds=self.config.distributed.timeout_seconds,
+        )
         self.started = perf_counter()
         self.current_steps = 0
         self.current_updates = 0
         self.current_episodes = 0
+        self.resume_steps = 0
         self.safe_steps = 0
         self.safe_updates = 0
         self.safe_episodes = 0
@@ -51,26 +67,39 @@ class AgentTrainingWorker:
         self.last_progress_phase: str | None = None
         self.cached_hardware: dict[str, float | None] = _empty_hardware_snapshot()
         self.latest_checkpoint: Path | None = None
-        self.rng = np.random.default_rng(self.config.seed)
+        self.rng = np.random.default_rng(self._rank_seed())
         self.validation_queue = ValidationQueue(self.run_dir)
 
     def run(self) -> int:
         model: SingleSymbolMultiFrequencyPolicy | None = None
         trainer: PPOTrainer | None = None
+        loader: AgentTimelineLoader | None = None
         splits_payload: dict[str, Any] | None = None
         try:
             self._status(
                 status="running",
                 phase="preflight",
                 message="Worker validating immutable run configuration",
+                run_name=self.config.run_name,
+                config_hash=self.config.config_hash,
+                total_steps=self.config.total_steps,
+                env_backend=self.config.runtime.env_backend,
+                parallel_envs=self.config.parallel_envs * self.distributed.world_size,
+                parallel_envs_per_rank=float(self.config.parallel_envs),
                 pid=os.getpid(),
+                distributed=self.distributed.payload(),
+                error=None,
                 heartbeat=_now(),
             )
             self._log(
                 f"WORKER pid={os.getpid()}, config={self.config.config_hash}, "
-                f"device={self.config.device}, steps={self.config.total_steps}"
+                f"device={self.config.device}, steps={self.config.total_steps}, "
+                f"distributed={self.distributed.payload()}, "
+                f"amp={self.config.runtime.amp_enabled}, amp_dtype={self.config.runtime.amp_dtype}, "
+                f"size_distribution={self.config.runtime.size_distribution}"
             )
             self._seed()
+            self._raise_if_cancel_requested()
 
             self._status(
                 status="running",
@@ -117,6 +146,7 @@ class AgentTrainingWorker:
                 market_cache_progress=cache_progress,
                 decision_cache_progress=cache_progress,
             )
+            self._raise_if_cancel_requested()
             if self.config.schema_hash and loader.schema_hash != self.config.schema_hash:
                 raise ValueError("Feature Parts schema changed after preflight.")
             self._status(
@@ -126,7 +156,14 @@ class AgentTrainingWorker:
                 heartbeat=_now(),
             )
             dates = loader.trading_dates()
-            splits = build_walk_forward_splits(dates)
+            self._raise_if_cancel_requested()
+            splits = build_walk_forward_splits(
+                dates,
+                validation_days=self.config.split.validation_days,
+                test_days=self.config.split.test_days,
+                embargo_days=self.config.split.embargo_days,
+                folds=self.config.split.folds,
+            )
             splits_payload = splits.payload()
             fold = splits.folds[self.config.fold - 1]
             train_dates = [date for date in dates if fold.train.start <= date <= fold.train.end]
@@ -139,17 +176,26 @@ class AgentTrainingWorker:
                 message="Building single-symbol multi-frequency PPO model and optimizer",
                 heartbeat=_now(),
             )
+            self._raise_if_cancel_requested()
             model, resume_payload = self._model(loader)
-            trainer = PPOTrainer(model, config=self.config.ppo, device=self.config.device)
+            trainer = PPOTrainer(
+                model,
+                config=self.config.ppo,
+                device=self.distributed.device,
+                distributed=self.distributed,
+            )
             if resume_payload:
                 optimizer_state = resume_payload.get("optimizer_state_dict")
                 if optimizer_state:
                     trainer.optimizer.load_state_dict(optimizer_state)
                 self._restore_runtime_state(resume_payload.get("runtime_state") or {})
+                if not self.distributed.is_primary:
+                    self._seed()
                 training_state = resume_payload.get("training_state") or {}
                 self.current_steps = int(training_state.get("total_steps") or 0)
                 self.current_updates = int(training_state.get("updates") or 0)
                 self.current_episodes = int(training_state.get("episodes") or 0)
+                self.resume_steps = self.current_steps
                 self.safe_steps = self.current_steps
                 self.safe_updates = self.current_updates
                 self.safe_episodes = self.current_episodes
@@ -168,36 +214,79 @@ class AgentTrainingWorker:
                     symbol_loaders[normalized] = selected
                 return selected
 
+            episode_days = min(self.config.episode_days, len(train_dates))
+            train_date_set = {date.normalize() for date in train_dates}
+            episode_dates_by_symbol: dict[str, list] = {}
+            for symbol in self.config.resolved_symbols:
+                normalized = str(symbol).upper()
+                symbol_dates = [
+                    date
+                    for date in loader_for_symbol(normalized).trading_dates()
+                    if date.normalize() in train_date_set
+                ]
+                if len(symbol_dates) >= episode_days:
+                    episode_dates_by_symbol[normalized] = symbol_dates
+            episode_symbols = tuple(sorted(episode_dates_by_symbol))
+            if not episode_symbols:
+                raise ValueError(
+                    "No selected symbols have enough contiguous training dates for "
+                    f"{episode_days} episode days. Rebuild Feature Dataset/Agent Cache "
+                    "or lower episode_days."
+                )
+
             def environment_factory() -> SingleSymbolTradingEnv:
                 # Train a shared single-stock operator: every episode samples one
                 # symbol shard and one contiguous date window.  Parallel envs still
                 # diversify rollout collection, but they no longer share a
                 # market-wide multi-symbol account.
-                if not self.config.resolved_symbols:
-                    raise ValueError("Resolved training symbols cannot be empty.")
-                days = min(self.config.episode_days, len(train_dates))
-                attempts = max(4, len(self.config.resolved_symbols) * 2)
+                days = episode_days
+                attempts = max(4, len(episode_symbols) * 2)
                 last_error: Exception | None = None
                 for _ in range(attempts):
-                    symbol = str(self.rng.choice(self.config.resolved_symbols)).upper()
-                    start_index = int(self.rng.integers(0, len(train_dates) - days + 1))
+                    symbol = str(self.rng.choice(episode_symbols)).upper()
+                    symbol_dates = episode_dates_by_symbol[symbol]
+                    start_index = int(self.rng.integers(0, len(symbol_dates) - days + 1))
                     try:
                         return SingleSymbolTradingEnv(
                             loader_for_symbol(symbol),
-                            start=train_dates[start_index],
-                            end=train_dates[start_index + days - 1],
+                            start=symbol_dates[start_index],
+                            end=symbol_dates[start_index + days - 1],
                             execution_config=self.config.execution,
                             reward_scale=self.config.reward.scale,
                             hurdle_rate_annual=self.config.reward.hurdle_rate_annual,
                             drawdown_penalty=self.config.reward.drawdown_penalty,
                             turnover_penalty=self.config.reward.turnover_penalty,
                             invalid_action_penalty=self.config.reward.invalid_action_penalty,
+                            enforce_action_contract=True,
                         )
                     except ValueError as exc:
                         last_error = exc
                 raise ValueError(
                     "Unable to create a single-symbol training episode from the selected universe."
                 ) from last_error
+
+            vector_env_factory = None
+            env_backend = str(getattr(self.config.runtime, "env_backend", "in_process") or "in_process")
+            if env_backend == "subprocess":
+                if self.distributed.enabled:
+                    raise ValueError("Subprocess env backend is not supported with DDP yet.")
+                subprocess_spec = SubprocessEnvSpec(
+                    store_path=str(Path(self.config.store_path).resolve()),
+                    universe=tuple(str(symbol).upper() for symbol in self.config.resolved_symbols),
+                    frequencies=tuple(self.config.frequencies or ()),
+                    episode_dates_by_symbol={
+                        symbol: tuple(pd.Timestamp(date).isoformat() for date in dates)
+                        for symbol, dates in episode_dates_by_symbol.items()
+                    },
+                    episode_days=int(episode_days),
+                    seed=int(self.config.seed) + int(self.distributed.rank) * 1_000_003,
+                    execution_config=asdict(self.config.execution),
+                    reward_config=asdict(self.config.reward),
+                    stream_chunk_size=max(8, 64 // max(1, self.config.parallel_envs)),
+                )
+
+                def vector_env_factory(count: int) -> SubprocessVectorEnv:
+                    return SubprocessVectorEnv(subprocess_spec, count)
 
             def progress(item: dict[str, object]) -> None:
                 now_perf = perf_counter()
@@ -210,24 +299,28 @@ class AgentTrainingWorker:
                     self.safe_updates = self.current_updates
                     self.safe_episodes = self.current_episodes
                 elapsed = max(now_perf - self.started, 1e-9)
-                rate = self.current_steps / elapsed
+                session_steps = max(0, self.current_steps - getattr(self, "resume_steps", 0))
+                rate = session_steps / elapsed
                 remaining = max(0, self.config.total_steps - self.current_steps)
                 phase_changed = phase != self.last_progress_phase
                 self.last_progress_phase = phase
                 important_phase_change = phase_changed and phase not in {"collecting", "updated"}
                 should_status = (
                     self.current_steps <= 1
+                    or phase == "updated"
                     or important_phase_change
                     or now_perf - self.last_status_write_at >= 5.0
                 )
                 should_record = (
                     self.current_steps <= 1
+                    or phase == "updated"
                     or now_perf - self.last_metric_write_at >= self._metric_interval_seconds(elapsed)
                 )
                 hardware = self._hardware_snapshot_cached(now_perf, force=should_record)
                 status_updates = {
                     "status": "running",
                     "phase": phase,
+                    "error": None,
                     "message": f"{phase} {self.current_steps}/{self.config.total_steps}",
                     "progress": self.current_steps / self.config.total_steps,
                     "steps": self.current_steps,
@@ -254,14 +347,20 @@ class AgentTrainingWorker:
 
             def after_update(item: dict[str, object]) -> None:
                 update = int(float(item.get("updates") or 0))
+                steps = int(float(item.get("steps") or 0))
                 control = self._control()
+                final_update = steps >= self.config.total_steps
                 interval = self.config.checkpoint.validation_interval_updates
-                validation_due = bool(interval and update % interval == 0)
-                checkpoint_due = (
-                    update % self.config.checkpoint.checkpoint_interval_updates == 0
-                    or control == "checkpoint"
-                    or validation_due
+                validation_due = bool(interval and update % interval == 0 and not final_update)
+                periodic_checkpoint_due = (
+                    not final_update
+                    and update % self.config.checkpoint.checkpoint_interval_updates == 0
                 )
+                manual_checkpoint_due = control == "checkpoint" and not final_update
+                checkpoint_due = periodic_checkpoint_due or manual_checkpoint_due or validation_due
+                if final_update and control == "checkpoint":
+                    self.store.clear_control(self.run_id)
+                    self._log("CHECKPOINT manual request merged into final checkpoint")
                 checkpoint = None
                 if checkpoint_due:
                     checkpoint = self._save_checkpoint(
@@ -287,6 +386,8 @@ class AgentTrainingWorker:
                         ),
                         device=self.config.validation.periodic_device,
                     )
+                # Every rank observes pause/stop at the next synchronized rollout
+                # boundary. Raising only on rank 0 would strand peers in DDP.
 
             self._status(
                 status="running",
@@ -294,6 +395,7 @@ class AgentTrainingWorker:
                 message="Starting rollout collection",
                 heartbeat=_now(),
             )
+            self._raise_if_cancel_requested()
             # Validation workers are launched lazily when a checkpoint actually needs validation.
             # Cache construction is a one-time preparation phase. Training speed
             # and ETA should start when rollout collection actually begins.
@@ -301,12 +403,14 @@ class AgentTrainingWorker:
             summary = trainer.train(
                 environment_factory,
                 total_steps=self.config.total_steps,
-                progress_callback=progress,
+                progress_callback=progress if self.distributed.is_primary else None,
                 cancel_check=self._cancel_requested,
                 initial_steps=self.current_steps,
                 initial_updates=self.current_updates,
-                update_callback=after_update,
+                update_callback=after_update if self.distributed.is_primary else None,
                 parallel_environments=self.config.parallel_envs,
+                env_backend=env_backend,
+                vector_env_factory=vector_env_factory,
             )
             self.current_steps = summary.total_steps
             self.current_updates = summary.updates
@@ -314,6 +418,10 @@ class AgentTrainingWorker:
             self.safe_steps = summary.total_steps
             self.safe_updates = summary.updates
             self.safe_episodes = summary.episodes
+            self.distributed.barrier()
+            if not self.distributed.is_primary:
+                self.distributed.barrier()
+                return 0
             final_checkpoint = self._save_checkpoint(
                 model,
                 trainer,
@@ -335,6 +443,9 @@ class AgentTrainingWorker:
                 phase="training_completed",
                 message="Training completed; final validation runs independently",
                 progress=1.0,
+                steps=self.current_steps,
+                updates=self.current_updates,
+                episodes=self.current_episodes,
                 pid=None,
                 result={
                     "checkpoint": str(final_checkpoint),
@@ -350,6 +461,7 @@ class AgentTrainingWorker:
                 torch.cuda.empty_cache()
             self._ensure_validation_worker()
             self._log(f"TRAINING COMPLETE checkpoint={final_checkpoint}; final validation queued")
+            self.distributed.barrier()
             return 0
         except TrainingCancelled:
             action = self._control()
@@ -386,6 +498,13 @@ class AgentTrainingWorker:
             )
             self._log(str(exc), level="error")
             raise
+        finally:
+            close = getattr(loader, "close", None)
+            if callable(close):
+                close()
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
 
     def _metric_interval_seconds(self, elapsed_seconds: float) -> float:
@@ -423,6 +542,7 @@ class AgentTrainingWorker:
                 },
                 decision_context_size=len(loader.decision_context_names),
                 runtime_state_size=len(loader.runtime_contract),
+                size_distribution=self.config.runtime.size_distribution,
                 **asdict(self.config.model),
             )
         )
@@ -440,6 +560,8 @@ class AgentTrainingWorker:
     ) -> Path:
         checkpoint_dir = self.run_dir / "checkpoints"
         checkpoint = checkpoint_dir / f"step_{self.safe_steps:09d}.pt"
+        if not self.distributed.is_primary:
+            return checkpoint
         training_state = asdict(summary) if summary else {
             "total_steps": self.safe_steps,
             "updates": self.safe_updates,
@@ -460,6 +582,9 @@ class AgentTrainingWorker:
                 "splits": splits,
                 "validation": validation,
                 "checkpoint_reason": reason,
+                "runtime": asdict(self.config.runtime),
+                "distributed": asdict(self.config.distributed),
+                "distributed_topology": self.distributed.payload(),
             },
             training_state=training_state,
             runtime_state=self._runtime_state(),
@@ -486,6 +611,8 @@ class AgentTrainingWorker:
             path.with_suffix(".json").unlink(missing_ok=True)
 
     def _publish_models(self) -> None:
+        if not self.distributed.is_primary:
+            return
         destination = Path(self.config.output_dir) / self.run_id
         destination.mkdir(parents=True, exist_ok=True)
         for name in ("latest.pt", "best.pt", "best_quick.pt"):
@@ -505,6 +632,8 @@ class AgentTrainingWorker:
         device: str,
         launch: bool = True,
     ) -> None:
+        if not self.distributed.is_primary:
+            return
         task = self.validation_queue.create_task(
             kind=kind,
             checkpoint=checkpoint,
@@ -526,6 +655,8 @@ class AgentTrainingWorker:
             self._ensure_validation_worker()
 
     def _ensure_validation_worker(self) -> None:
+        if not self.distributed.is_primary:
+            return
         self.validation_queue.ensure_worker()
 
     def _runtime_state(self) -> dict[str, Any]:
@@ -544,10 +675,14 @@ class AgentTrainingWorker:
             torch.cuda.set_rng_state_all(state["cuda_rng"])
 
     def _seed(self) -> None:
-        np.random.seed(self.config.seed)
-        torch.manual_seed(self.config.seed)
+        seed = self._rank_seed()
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(self.config.seed)
+            torch.cuda.manual_seed(seed)
+
+    def _rank_seed(self) -> int:
+        return int(self.config.seed) + int(self.distributed.rank) * 1_000_003
 
     def _control(self) -> str | None:
         return self.store.read_control(self.run_id).get("action")
@@ -555,18 +690,32 @@ class AgentTrainingWorker:
     def _cancel_requested(self) -> bool:
         return self._control() in {"pause", "stop"}
 
+    def _raise_if_cancel_requested(self) -> None:
+        if self._cancel_requested():
+            raise TrainingCancelled("Agent training cancellation requested.")
+
     def _status(self, **updates: Any) -> None:
+        if not self.distributed.is_primary:
+            return
         self.store.update_status(self.run_id, **updates)
 
     def _log(self, message: str, *, level: str = "info") -> None:
+        if not self.distributed.is_primary:
+            return
         self.store.append_log(self.run_id, message, level=level)
 
 
 def main() -> int:
+    if not faulthandler.is_enabled():
+        faulthandler.enable(file=sys.stderr, all_threads=True)
     parser = argparse.ArgumentParser(description="Run one persistent PocketAgent training run.")
     parser.add_argument("--run-dir", required=True)
     args = parser.parse_args()
-    return AgentTrainingWorker(args.run_dir).run()
+    worker = AgentTrainingWorker(args.run_dir)
+    try:
+        return worker.run()
+    finally:
+        worker.distributed.close()
 
 
 def _empty_hardware_snapshot() -> dict[str, float | None]:
@@ -574,7 +723,10 @@ def _empty_hardware_snapshot() -> dict[str, float | None]:
         "cpu_percent": None,
         "memory_percent": None,
         "gpu_percent": None,
+        "gpu_percent_min": None,
+        "gpu_percent_max": None,
         "gpu_memory_percent": None,
+        "gpu_count": None,
     }
 
 
@@ -609,6 +761,11 @@ _TRAINING_DIAGNOSTIC_KEYS = {
     "optimize_steps_per_second",
     "optimizer_steps",
     "optimizer_steps_per_second",
+    "world_size",
+    "parallel_envs_per_rank",
+    "env_backend",
+    "environment_wall_seconds",
+    "local_samples_per_update",
     "policy_loss",
     "value_loss",
     "entropy",
@@ -631,7 +788,7 @@ def _hardware_snapshot(device: str) -> dict[str, float | None]:
         payload["memory_percent"] = float(psutil.virtual_memory().percent)
     except Exception:
         pass
-    if str(device).lower() != "cuda":
+    if not str(device).lower().startswith("cuda"):
         return payload
     try:
         nvidia_smi_kwargs: dict[str, Any] = {
@@ -649,16 +806,26 @@ def _hardware_snapshot(device: str) -> dict[str, float | None]:
             ],
             **nvidia_smi_kwargs,
         )
-        first = output.strip().splitlines()[0]
-        gpu_util, memory_used, memory_total = [float(part.strip()) for part in first.split(",")[:3]]
-        payload["gpu_percent"] = gpu_util
-        payload["gpu_memory_percent"] = (memory_used / memory_total * 100.0) if memory_total else None
+        rows = [
+            [float(part.strip()) for part in line.split(",")[:3]]
+            for line in output.strip().splitlines()
+            if line.strip()
+        ]
+        utilization = [row[0] for row in rows]
+        memory_ratios = [row[1] / row[2] * 100.0 for row in rows if row[2]]
+        payload["gpu_count"] = float(len(rows))
+        payload["gpu_percent"] = sum(utilization) / len(utilization) if utilization else None
+        payload["gpu_percent_min"] = min(utilization) if utilization else None
+        payload["gpu_percent_max"] = max(utilization) if utilization else None
+        payload["gpu_memory_percent"] = max(memory_ratios) if memory_ratios else None
     except Exception:
         try:
             if torch.cuda.is_available():
                 used = float(torch.cuda.memory_allocated())
-                total = float(torch.cuda.get_device_properties(0).total_memory)
+                device_index = torch.cuda.current_device()
+                total = float(torch.cuda.get_device_properties(device_index).total_memory)
                 payload["gpu_memory_percent"] = (used / total * 100.0) if total else None
+                payload["gpu_count"] = float(torch.cuda.device_count())
         except Exception:
             pass
     return payload

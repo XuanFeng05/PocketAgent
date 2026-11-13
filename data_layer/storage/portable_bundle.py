@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
 import shutil
+import tempfile
 from typing import Any, Callable, Iterable
 import zlib
 
@@ -18,6 +19,8 @@ from data_layer.storage.partitioned_storage import (
 )
 
 BUNDLE_SCHEMA_VERSION = 1
+BUNDLE_TRANSACTION_FILE_LIMIT = 25
+BUNDLE_TRANSACTION_BYTE_LIMIT = 256 * 1024 * 1024
 DEFAULT_BUNDLE_PATH = Path("runtime_layer/bundles/pocketagent_bundle.duckdb")
 DEFAULT_FEATURE_OUTPUT_DIR = Path("runtime_layer/reports/feature_dataset")
 FEATURE_PARTS_DIR_NAME = "feature_parts"
@@ -163,6 +166,38 @@ def _init_bundle_db(conn: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+def _quote_sql_string(value: str | Path) -> str:
+    return str(value).replace("'", "''")
+
+
+def _compact_bundle_db(source: Path, target: Path) -> None:
+    target.unlink(missing_ok=True)
+    target.with_name(f"{target.name}.wal").unlink(missing_ok=True)
+    conn = duckdb.connect(":memory:")
+    try:
+        conn.execute("SET preserve_insertion_order = false")
+        conn.execute("SET memory_limit = '4GB'")
+        conn.execute(
+            f"ATTACH '{_quote_sql_string(source)}' AS source_bundle (READ_ONLY)"
+        )
+        conn.execute(f"ATTACH '{_quote_sql_string(target)}' AS target_bundle")
+        conn.execute("COPY FROM DATABASE source_bundle TO target_bundle")
+        source_count = int(
+            conn.execute("SELECT COUNT(*) FROM source_bundle.bundle_items").fetchone()[0]
+        )
+        target_count = int(
+            conn.execute("SELECT COUNT(*) FROM target_bundle.bundle_items").fetchone()[0]
+        )
+        if source_count != target_count:
+            raise ValueError(
+                f"Bundle compaction row mismatch: {source_count} != {target_count}"
+            )
+        conn.execute("DETACH target_bundle")
+        conn.execute("DETACH source_bundle")
+    finally:
+        conn.close()
+
+
 def _set_meta(conn: duckdb.DuckDBPyConnection, key: str, value: object) -> None:
     conn.execute("INSERT INTO bundle_meta VALUES (?, ?)", [key, str(value)])
 
@@ -198,8 +233,10 @@ def export_portable_bundle(
         raise ValueError("No shard files were found to export.")
 
     tmp_path = target.with_name(f".{target.name}.{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.tmp")
+    compact_path = tmp_path.with_name(f"{tmp_path.name}.compact")
     if tmp_path.exists():
         tmp_path.unlink()
+    compact_path.unlink(missing_ok=True)
 
     total = len(files)
     total_bytes = 0
@@ -220,6 +257,7 @@ def export_portable_bundle(
     progress(0, "Preparing portable bundle")
     conn = duckdb.connect(str(tmp_path))
     try:
+        conn.execute("SET preserve_insertion_order = false")
         _init_bundle_db(conn)
         _set_meta(conn, "schema_version", BUNDLE_SCHEMA_VERSION)
         _set_meta(conn, "created_at", now_utc_text())
@@ -230,6 +268,8 @@ def export_portable_bundle(
         _set_meta(conn, "feature_output_dir", feature_output_dir or DEFAULT_FEATURE_OUTPUT_DIR)
         _set_meta(conn, "file_count", total)
         conn.execute("BEGIN TRANSACTION")
+        transaction_files = 0
+        transaction_bytes = 0
         for index, item in enumerate(files, start=1):
             if cancel_check and cancel_check():
                 raise InterruptedError("Bundle export cancelled")
@@ -260,6 +300,16 @@ def export_portable_bundle(
                     payload,
                 ],
             )
+            transaction_files += 1
+            transaction_bytes += len(payload)
+            if index < total and (
+                transaction_files >= BUNDLE_TRANSACTION_FILE_LIMIT
+                or transaction_bytes >= BUNDLE_TRANSACTION_BYTE_LIMIT
+            ):
+                conn.execute("COMMIT")
+                conn.execute("BEGIN TRANSACTION")
+                transaction_files = 0
+                transaction_bytes = 0
             if index == 1 or index == total or index % 25 == 0:
                 progress(index, f"Packed {index}/{total} files", item.relative_path)
         _set_meta(conn, "total_bytes", total_bytes)
@@ -277,9 +327,15 @@ def export_portable_bundle(
         raise
     else:
         conn.close()
-        if target.exists():
-            target.unlink()
-        tmp_path.replace(target)
+        try:
+            progress(total, "Compacting portable bundle", str(target))
+            _compact_bundle_db(tmp_path, compact_path)
+            tmp_path.unlink(missing_ok=True)
+            compact_path.replace(target)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            compact_path.unlink(missing_ok=True)
+            raise
 
     bundle_size = target.stat().st_size if target.exists() else 0
     return {
@@ -380,75 +436,137 @@ def import_portable_bundle(
 
     layer_values = ", ".join("'" + layer.replace("'", "''") + "'" for layer in sorted(layers))
 
-    with duckdb.connect(str(bundle), read_only=True) as conn:
-        total = int(conn.execute(
-            f"""
-            SELECT COUNT(*) FROM bundle_items
-            WHERE layer IN ({layer_values})
-              AND item_type <> 'feature_store_optional'
-              AND relative_path NOT LIKE '%/feature_store.duckdb'
-            """
-        ).fetchone()[0] or 0)
-        if total <= 0:
-            raise ValueError("No selected layer files were found in the bundle.")
+    def check_cancelled() -> None:
+        if cancel_check and cancel_check():
+            raise InterruptedError("Bundle import cancelled")
 
-        if replace_existing:
-            for target in _layer_roots_from_bundle(conn, root, layers):
-                if cancel_check and cancel_check():
-                    raise InterruptedError("Bundle import cancelled")
-                if not _is_inside(target, root):
-                    raise ValueError(f"Refusing to clean path outside project root: {target}")
-                if target.is_dir():
-                    shutil.rmtree(target, ignore_errors=True)
-                elif target.exists():
-                    target.unlink()
+    # Stage on the same volume so publishing and restoring an original are
+    # renames. No original path is changed until every selected file verifies.
+    stage = Path(tempfile.mkdtemp(prefix=".bundle-import-", dir=root))
+    incoming = stage / "incoming"
+    originals = stage / "originals"
+    preserve_recovery = False
+    installed: list[Path] = []
+    backed_up: list[tuple[Path, Path]] = []
+    created_parents: list[Path] = []
+    try:
+        with duckdb.connect(str(bundle), read_only=True) as conn:
+            selection = (
+                f"layer IN ({layer_values}) AND item_type <> 'feature_store_optional' "
+                "AND relative_path NOT LIKE '%/feature_store.duckdb'"
+            )
+            metadata = conn.execute(
+                f"SELECT relative_path FROM bundle_items WHERE {selection} ORDER BY relative_path"
+            ).fetchall()
+            total = len(metadata)
+            if total <= 0:
+                raise ValueError("No selected layer files were found in the bundle.")
+            targets = [_bundle_import_target(root, str(row[0])) for row in metadata]
+            if len(set(targets)) != len(targets):
+                raise ValueError("Bundle contains duplicate destination paths")
+            candidates = _layer_roots_from_bundle(conn, root, layers) if replace_existing else []
+            candidates = [p for p in candidates if any(p == t or p in t.parents for t in targets)]
+            candidates.extend(targets)
+            # Use disjoint outermost roots: an exact feature_parts replacement
+            # removes stale shards, while sibling reports are replaced singly.
+            publish_roots: list[Path] = []
+            for target in sorted(set(candidates), key=lambda p: (len(p.parts), str(p))):
+                _bundle_import_target(root, target.relative_to(root).as_posix())
+                if not any(parent == target or parent in target.parents for parent in publish_roots):
+                    publish_roots.append(target)
+            if any(target == bundle or target in bundle.parents for target in publish_roots):
+                raise ValueError("The imported bundle cannot be inside a replacement target")
 
-        if progress_callback:
-            progress_callback({"completed": 0, "total": total, "progress": 0.0, "message": "Restoring portable bundle", "current": None})
+            check_cancelled()
+            if progress_callback:
+                progress_callback({"completed": 0, "total": total, "progress": 0.0, "message": "Validating and staging portable bundle", "current": None})
+            cursor = conn.execute(
+                f"SELECT relative_path, size, sha256, compression, payload FROM bundle_items "
+                f"WHERE {selection} ORDER BY relative_path"
+            )
+            # Fetch one payload at a time; a bundle need not fit in RAM.
+            for index in range(1, total + 1):
+                check_cancelled()
+                relative_path, size, digest, compression, payload = cursor.fetchone()
+                target = _bundle_import_target(root, str(relative_path))
+                raw = bytes(payload)
+                if str(compression).lower() == "zlib":
+                    raw = zlib.decompress(raw)
+                elif str(compression).lower() not in {"none", ""}:
+                    raise ValueError(f"Unsupported bundle compression {compression!r} for {relative_path}")
+                if len(raw) != int(size) or sha256_bytes(raw) != str(digest):
+                    failed_files.append(str(relative_path))
+                    raise ValueError(f"Hash or size verification failed for {relative_path}")
+                verified_files += 1
+                if target.exists() and not replace_existing:
+                    skipped_files += 1
+                    continue
+                staged = incoming / target.relative_to(root)
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                staged.write_bytes(raw)
+                restored_files += 1
+                restored_bytes += len(raw)
+                if progress_callback and (index == 1 or index == total or index % 25 == 0):
+                    progress_callback({
+                        "completed": index, "total": total, "progress": 0.9 * index / total,
+                        "message": f"Validated {index}/{total} files", "current": str(relative_path),
+                    })
 
-        rows = conn.execute(
-            f"""
-            SELECT relative_path, layer, item_type, size, sha256, compression, payload
-            FROM bundle_items
-            WHERE layer IN ({layer_values})
-              AND item_type <> 'feature_store_optional'
-              AND relative_path NOT LIKE '%/feature_store.duckdb'
-            ORDER BY relative_path
-            """
-        ).fetchall()
-        for index, (relative_path, layer, item_type, size, digest, compression, payload) in enumerate(rows, start=1):
-            if cancel_check and cancel_check():
-                raise InterruptedError("Bundle import cancelled")
-            target = (root / str(relative_path)).resolve()
-            if not _is_inside(target, root):
-                raise ValueError(f"Refusing to restore path outside project root: {relative_path}")
-            if target.exists() and not replace_existing:
-                skipped_files += 1
+        # The bundle connection is closed before any rename. Each rename has
+        # a rollback record; cancellation and failures restore all old roots.
+        check_cancelled()
+        for target in publish_roots:
+            staged = incoming / target.relative_to(root)
+            if not staged.exists():
                 continue
-            raw = bytes(payload)
-            if str(compression).lower() == "zlib":
-                raw = zlib.decompress(raw)
-            elif str(compression).lower() not in {"none", ""}:
-                raise ValueError(f"Unsupported bundle compression {compression!r} for {relative_path}")
-            actual_digest = sha256_bytes(raw)
-            if actual_digest != str(digest):
-                failed_files.append(str(relative_path))
-                raise ValueError(f"Hash verification failed for {relative_path}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            tmp = target.with_name(f".{target.name}.restore_tmp")
-            tmp.write_bytes(raw)
-            tmp.replace(target)
-            restored_files += 1
-            restored_bytes += int(size or len(raw))
-            verified_files += 1
-            if progress_callback and (index == 1 or index == total or index % 25 == 0):
-                progress_callback({
-                    "completed": index,
-                    "total": total,
-                    "progress": index / max(1, total),
-                    "message": f"Restored {index}/{total} files",
-                    "current": str(relative_path),
-                })
+            check_cancelled()
+            _bundle_import_target(root, target.relative_to(root).as_posix())
+            if target.exists() and not replace_existing:
+                raise FileExistsError(f"Import destination appeared during staging: {target}")
+            missing = []
+            parent = target.parent
+            while not parent.exists():
+                missing.append(parent)
+                parent = parent.parent
+            for parent in reversed(missing):
+                parent.mkdir()
+                created_parents.append(parent)
+            if target.exists():
+                saved = originals / target.relative_to(root)
+                saved.parent.mkdir(parents=True, exist_ok=True)
+                target.replace(saved)
+                backed_up.append((target, saved))
+            staged.replace(target)
+            installed.append(target)
+        check_cancelled()
+        if progress_callback:
+            progress_callback({"completed": total, "total": total, "progress": 1.0, "message": "Portable bundle restored", "current": None})
+    except BaseException as exc:
+        rollback_errors = []
+        for target in reversed(installed):
+            try:
+                staged = incoming / target.relative_to(root)
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                target.replace(staged)
+            except OSError as error:
+                rollback_errors.append(str(error))
+        for target, saved in reversed(backed_up):
+            try:
+                saved.replace(target)
+            except OSError as error:
+                rollback_errors.append(str(error))
+        for parent in reversed(created_parents):
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+        if rollback_errors:
+            preserve_recovery = True
+            raise RuntimeError(f"Bundle import failed; originals retained for recovery in {originals}: {rollback_errors}") from exc
+        raise
+    finally:
+        if not preserve_recovery:
+            shutil.rmtree(stage, ignore_errors=True)
 
     return {
         "bundle_path": _relative_to_project(root, bundle) if _is_inside(bundle, root) else str(bundle),
@@ -459,3 +577,23 @@ def import_portable_bundle(
         "failed_files": failed_files,
         "cancelled": False,
     }
+
+
+def _bundle_import_target(root: Path, relative_path: str) -> Path:
+    """Reject traversal, Git metadata and linked destinations before staging."""
+    relative = Path(relative_path)
+    if (
+        not relative.parts or relative.is_absolute() or relative.drive
+        or any(part.casefold() in {"..", ".git"} or ":" in part for part in relative.parts)
+        or relative.parts[0].startswith(".bundle-import-")
+    ):
+        raise ValueError(f"Invalid bundle destination: {relative_path}")
+    target = root / relative
+    if target == root or not _is_inside(target, root):
+        raise ValueError(f"Refusing to restore path outside project root: {relative_path}")
+    for path in (target, *target.parents):
+        if path == root:
+            break
+        if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+            raise ValueError(f"Refusing linked bundle destination: {path}")
+    return target.resolve()

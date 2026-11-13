@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
+import duckdb
 import pandas as pd
 
 from agent_layer.data.cache_schema import EPISODE_INDEX_NAME, safe_symbol_name
+from agent_layer.data.tensor_store import write_parquet_frame
 
 
 def build_episode_index_frame(symbol_summaries: Iterable[dict[str, object]]) -> pd.DataFrame:
@@ -42,9 +44,10 @@ def build_episode_index_frame(symbol_summaries: Iterable[dict[str, object]]) -> 
 def write_episode_index(cache_dir: str | Path, frame: pd.DataFrame) -> Path:
     output = Path(cache_dir) / EPISODE_INDEX_NAME
     output.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_parquet(output, index=False)
-    return output
+    return write_parquet_frame(output, frame)
 
 
 def read_episode_index(cache_dir: str | Path) -> pd.DataFrame:
-    return pd.read_parquet(Path(cache_dir) / EPISODE_INDEX_NAME)
+    path = Path(cache_dir) / EPISODE_INDEX_NAME
+    with duckdb.connect(":memory:") as conn:
+        return conn.execute("SELECT * FROM read_parquet(?)", [str(path)]).fetchdf()

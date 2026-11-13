@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Callable
+from typing import Callable, Any
 
 import numpy as np
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 from agent_layer.actions import PortfolioAction
 from agent_layer.environment import AgentObservation, AshareTradingEnv
@@ -17,6 +17,7 @@ from agent_layer.models import (
     observation_to_tensors,
 )
 from agent_layer.training.mappo import MAPPOConfig, compute_gae, compute_mappo_loss
+from agent_layer.training.distributed import DistributedTrainingContext
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,25 @@ class TrainingCancelled(InterruptedError):
     pass
 
 
+class _MAPPOUpdateModule(nn.Module):
+    def __init__(self, policy: MultiFrequencyMAPPO) -> None:
+        super().__init__()
+        self.policy = policy
+
+    def forward(
+        self,
+        *,
+        directions: Tensor,
+        sizes: Tensor,
+        **observation_inputs: object,
+    ) -> object:
+        return self.policy.evaluate_actions(
+            directions=directions,
+            sizes=sizes,
+            **observation_inputs,
+        )
+
+
 class MAPPOTrainer:
     def __init__(
         self,
@@ -132,11 +152,14 @@ class MAPPOTrainer:
         *,
         config: MAPPOConfig | None = None,
         device: str | torch.device = "cpu",
+        distributed: DistributedTrainingContext | None = None,
     ) -> None:
         self.model = model
         self.config = config or MAPPOConfig()
-        self.device = torch.device(device)
+        self.distributed = distributed or DistributedTrainingContext(device=torch.device(device))
+        self.device = self.distributed.device
         self.model.to(self.device)
+        self.update_model = self.distributed.wrap(_MAPPOUpdateModule(self.model))
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=self.config.learning_rate,
@@ -155,11 +178,31 @@ class MAPPOTrainer:
         initial_updates: int = 0,
         update_callback: Callable[[dict[str, object]], None] | None = None,
         parallel_environments: int = 1,
+        env_backend: str = "in_process",
+        vector_env_factory: Callable[[int], Any] | None = None,
     ) -> TrainingSummary:
         if total_steps <= 0:
             raise ValueError("Training steps must be positive.")
         parallel_environments = max(1, int(parallel_environments))
-        if parallel_environments > 1:
+        backend = str(env_backend or "in_process").strip().lower()
+        if backend == "subprocess":
+            if self.distributed.enabled:
+                raise ValueError("Subprocess environment backend is not supported with DDP yet.")
+            if vector_env_factory is None:
+                raise ValueError("Subprocess environment backend requires a vector_env_factory.")
+            return self._train_vector_parallel(
+                vector_env_factory,
+                total_steps=total_steps,
+                progress_callback=progress_callback,
+                cancel_check=cancel_check,
+                initial_steps=initial_steps,
+                initial_updates=initial_updates,
+                update_callback=update_callback,
+                parallel_environments=parallel_environments,
+            )
+        if backend != "in_process":
+            raise ValueError(f"Unsupported environment backend: {env_backend}")
+        if parallel_environments > 1 or self.distributed.enabled:
             return self._train_parallel(
                 environment_factory,
                 total_steps=total_steps,
@@ -209,7 +252,8 @@ class MAPPOTrainer:
         completed_steps = max(0, int(initial_steps))
         updates = max(0, int(initial_updates))
         episodes = 0
-        rewards_seen: list[float] = []
+        reward_sum = 0.0
+        reward_count = 0
         final_loss = 0.0
         final_kl = 0.0
         final_update = TrainingUpdateMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
@@ -256,7 +300,9 @@ class MAPPOTrainer:
                 }
             )
             episodes += ended_episodes
-            rewards_seen.extend(rollout["reward"].tolist())
+            reward_tensor = rollout["reward"]
+            reward_sum += float(reward_tensor.sum().item())
+            reward_count += int(reward_tensor.numel())
             if progress_callback:
                 progress_callback(
                     {
@@ -316,7 +362,7 @@ class MAPPOTrainer:
             total_steps=completed_steps,
             updates=updates,
             episodes=episodes,
-            mean_reward=float(np.mean(rewards_seen)) if rewards_seen else 0.0,
+            mean_reward=reward_sum / max(1, reward_count),
             final_loss=final_loss,
             final_approximate_kl=final_kl,
             final_policy_loss=final_update.policy_loss,
@@ -325,6 +371,210 @@ class MAPPOTrainer:
             final_clip_fraction=final_update.clip_fraction,
             final_gradient_norm=final_update.gradient_norm,
         )
+
+
+    def _train_vector_parallel(
+        self,
+        vector_env_factory: Callable[[int], Any],
+        *,
+        total_steps: int,
+        progress_callback: Callable[[dict[str, object]], None] | None,
+        cancel_check: Callable[[], bool] | None,
+        initial_steps: int,
+        initial_updates: int,
+        update_callback: Callable[[dict[str, object]], None] | None,
+        parallel_environments: int,
+    ) -> TrainingSummary:
+        completed_steps = max(0, int(initial_steps))
+        updates = max(0, int(initial_updates))
+        episodes = 0
+        reward_sum = 0.0
+        reward_count = 0
+        final_loss = 0.0
+        final_kl = 0.0
+        final_update = TrainingUpdateMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
+        vector_env = None
+        try:
+            if progress_callback:
+                progress_callback(
+                    {
+                        "phase": "initializing_envs",
+                        "steps": float(completed_steps),
+                        "total_steps": float(total_steps),
+                        "progress": completed_steps / total_steps,
+                        "updates": float(updates),
+                        "episodes": float(episodes),
+                        "loss": final_loss,
+                        "approximate_kl": final_kl,
+                        "learning_rate": self.optimizer.param_groups[0]["lr"],
+                        "parallel_envs": float(parallel_environments),
+                        "parallel_envs_per_rank": float(parallel_environments),
+                        "world_size": 1.0,
+                        "env_backend": "subprocess",
+                        "initialized_envs": 0.0,
+                        "initialized_env_seconds": 0.0,
+                    }
+                )
+            initialization_started = perf_counter()
+            vector_env = vector_env_factory(parallel_environments)
+            observations, _infos, init_telemetry = vector_env.reset()
+            initialized_env_seconds = perf_counter() - initialization_started
+            if progress_callback:
+                progress_callback(
+                    {
+                        "phase": "initializing_envs",
+                        "steps": float(completed_steps),
+                        "total_steps": float(total_steps),
+                        "progress": completed_steps / total_steps,
+                        "updates": float(updates),
+                        "episodes": float(episodes),
+                        "loss": final_loss,
+                        "approximate_kl": final_kl,
+                        "learning_rate": self.optimizer.param_groups[0]["lr"],
+                        "parallel_envs": float(parallel_environments),
+                        "parallel_envs_per_rank": float(parallel_environments),
+                        "world_size": 1.0,
+                        "env_backend": "subprocess",
+                        "initialized_envs": float(parallel_environments),
+                        "initialized_env_seconds": initialized_env_seconds,
+                        **{k: v for k, v in dict(init_telemetry or {}).items() if k not in {"initialized_env_seconds"}},
+                    }
+                )
+
+            while completed_steps < total_steps:
+                if cancel_check and cancel_check():
+                    raise TrainingCancelled("Agent training cancellation requested.")
+                remaining = max(1, total_steps - completed_steps)
+                active_envs = min(parallel_environments, remaining)
+                if active_envs != parallel_environments:
+                    # Keep subprocess vector env stable; finish using at least one full vector step.
+                    active_envs = parallel_environments
+                per_env_steps = min(self.config.rollout_steps, max(1, remaining // parallel_environments))
+                collect_started = perf_counter()
+                rollout, observations, ended_episodes, samples = self._collect_rollout_vector(
+                    vector_env,
+                    observations,
+                    per_env_steps,
+                    cancel_check,
+                    step_callback=(
+                        lambda collected, telemetry: progress_callback(
+                            {
+                                "phase": "collecting",
+                                "steps": float(min(total_steps, completed_steps + collected)),
+                                "total_steps": float(total_steps),
+                                "progress": min(1.0, (completed_steps + collected) / total_steps),
+                                "updates": float(updates),
+                                "episodes": float(episodes),
+                                "loss": final_loss,
+                                "approximate_kl": final_kl,
+                                "learning_rate": self.optimizer.param_groups[0]["lr"],
+                                "parallel_envs": float(parallel_environments),
+                                "parallel_envs_per_rank": float(parallel_environments),
+                                "world_size": 1.0,
+                                "env_backend": "subprocess",
+                                **telemetry,
+                            }
+                        )
+                        if progress_callback
+                        else None
+                    ),
+                )
+                collect_seconds = perf_counter() - collect_started
+                collect_diagnostics = dict(rollout.get("_diagnostics") or {})
+                collect_diagnostics.update(
+                    {
+                        "collect_seconds": collect_seconds,
+                        "collect_steps_per_second": samples / max(collect_seconds, 1e-9),
+                        "collect_overhead_seconds": _collect_overhead_seconds(
+                            collect_seconds, collect_diagnostics
+                        ),
+                        "env_backend": "subprocess",
+                    }
+                )
+                episodes += int(ended_episodes)
+                reward_tensor = rollout["reward"]
+                reward_sum += float(reward_tensor.sum().item())
+                reward_count += int(reward_tensor.numel())
+                if progress_callback:
+                    progress_callback(
+                        {
+                            "phase": "optimizing",
+                            "steps": float(min(total_steps, completed_steps + samples)),
+                            "total_steps": float(total_steps),
+                            "progress": min(1.0, (completed_steps + samples) / total_steps),
+                            "updates": float(updates),
+                            "episodes": float(episodes),
+                            "loss": final_loss,
+                            "approximate_kl": final_kl,
+                            "learning_rate": self.optimizer.param_groups[0]["lr"],
+                            "parallel_envs": float(parallel_environments),
+                            "parallel_envs_per_rank": float(parallel_environments),
+                            "world_size": 1.0,
+                            **collect_diagnostics,
+                        }
+                    )
+                optimize_started = perf_counter()
+                final_update = self._update(rollout)
+                optimize_seconds = perf_counter() - optimize_started
+                final_loss = final_update.total_loss
+                final_kl = final_update.approximate_kl
+                completed_steps += samples
+                updates += 1
+                progress = min(1.0, completed_steps / total_steps)
+                learning_rate = self.config.learning_rate + progress * (
+                    self.config.final_learning_rate - self.config.learning_rate
+                )
+                for group in self.optimizer.param_groups:
+                    group["lr"] = learning_rate
+                update_payload = {
+                    "phase": "updated",
+                    "steps": float(completed_steps),
+                    "total_steps": float(total_steps),
+                    "progress": progress,
+                    "updates": float(updates),
+                    "episodes": float(episodes),
+                    "loss": final_loss,
+                    "approximate_kl": final_kl,
+                    "learning_rate": learning_rate,
+                    "policy_loss": final_update.policy_loss,
+                    "value_loss": final_update.value_loss,
+                    "entropy": final_update.entropy,
+                    "clip_fraction": final_update.clip_fraction,
+                    "gradient_norm": final_update.gradient_norm,
+                    "optimizer_steps": float(final_update.optimizer_steps),
+                    "parallel_envs": float(parallel_environments),
+                    "parallel_envs_per_rank": float(parallel_environments),
+                    "world_size": 1.0,
+                    "env_backend": "subprocess",
+                    "optimize_seconds": optimize_seconds,
+                    "samples_per_update": float(samples),
+                    "local_samples_per_update": float(samples),
+                    "optimize_steps_per_second": samples / max(optimize_seconds, 1e-9),
+                    "optimizer_steps_per_second": final_update.optimizer_steps / max(optimize_seconds, 1e-9),
+                    **collect_diagnostics,
+                }
+                if progress_callback:
+                    progress_callback(update_payload)
+                if update_callback:
+                    update_callback(update_payload)
+
+            return TrainingSummary(
+                total_steps=completed_steps,
+                updates=updates,
+                episodes=episodes,
+                mean_reward=reward_sum / max(1, reward_count),
+                final_loss=final_loss,
+                final_approximate_kl=final_kl,
+                final_policy_loss=final_update.policy_loss,
+                final_value_loss=final_update.value_loss,
+                final_entropy=final_update.entropy,
+                final_clip_fraction=final_update.clip_fraction,
+                final_gradient_norm=final_update.gradient_norm,
+            )
+        finally:
+            close = getattr(vector_env, "close", None)
+            if callable(close):
+                close()
 
     def _train_parallel(
         self,
@@ -339,9 +589,16 @@ class MAPPOTrainer:
         parallel_environments: int,
     ) -> TrainingSummary:
         completed_steps = max(0, int(initial_steps))
+        remaining_steps = total_steps - completed_steps
+        if remaining_steps % self.distributed.world_size != 0:
+            raise ValueError(
+                "Remaining training steps must be divisible by the distributed world size: "
+                f"{remaining_steps} % {self.distributed.world_size} != 0."
+            )
         updates = max(0, int(initial_updates))
         episodes = 0
-        rewards_seen: list[float] = []
+        reward_sum = 0.0
+        reward_count = 0
         final_loss = 0.0
         final_kl = 0.0
         final_update = TrainingUpdateMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
@@ -362,6 +619,8 @@ class MAPPOTrainer:
                         "approximate_kl": final_kl,
                         "learning_rate": self.optimizer.param_groups[0]["lr"],
                         "parallel_envs": float(parallel_environments),
+                        "parallel_envs_per_rank": float(parallel_environments),
+                        "world_size": float(self.distributed.world_size),
                         "initialized_envs": float(env_index),
                         "initialized_env_seconds": initialized_env_seconds,
                     }
@@ -385,6 +644,8 @@ class MAPPOTrainer:
                     "approximate_kl": final_kl,
                     "learning_rate": self.optimizer.param_groups[0]["lr"],
                     "parallel_envs": float(parallel_environments),
+                    "parallel_envs_per_rank": float(parallel_environments),
+                    "world_size": float(self.distributed.world_size),
                     "initialized_envs": float(parallel_environments),
                     "initialized_env_seconds": initialized_env_seconds,
                 }
@@ -394,10 +655,11 @@ class MAPPOTrainer:
             if cancel_check and cancel_check():
                 raise TrainingCancelled("Agent training cancellation requested.")
             remaining = max(1, total_steps - completed_steps)
-            active_envs = min(parallel_environments, remaining)
+            local_remaining = remaining // self.distributed.world_size
+            active_envs = min(parallel_environments, local_remaining)
             per_env_steps = min(
                 self.config.rollout_steps,
-                max(1, remaining // active_envs),
+                max(1, local_remaining // active_envs),
             )
             collect_started = perf_counter()
             rollout, next_observations, next_environments, ended_episodes, samples = (
@@ -411,15 +673,25 @@ class MAPPOTrainer:
                         lambda collected, telemetry: progress_callback(
                             {
                                 "phase": "collecting",
-                                "steps": float(completed_steps + collected),
+                                "steps": float(
+                                    completed_steps + collected * self.distributed.world_size
+                                ),
                                 "total_steps": float(total_steps),
-                                "progress": (completed_steps + collected) / total_steps,
+                                "progress": min(
+                                    1.0,
+                                    (completed_steps + collected * self.distributed.world_size)
+                                    / total_steps,
+                                ),
                                 "updates": float(updates),
                                 "episodes": float(episodes),
                                 "loss": final_loss,
                                 "approximate_kl": final_kl,
                                 "learning_rate": self.optimizer.param_groups[0]["lr"],
-                                "parallel_envs": float(active_envs),
+                                "parallel_envs": float(
+                                    active_envs * self.distributed.world_size
+                                ),
+                                "parallel_envs_per_rank": float(active_envs),
+                                "world_size": float(self.distributed.world_size),
                                 **telemetry,
                             }
                         )
@@ -428,12 +700,20 @@ class MAPPOTrainer:
                     ),
                 )
             )
-            collect_seconds = perf_counter() - collect_started
-            collect_diagnostics = dict(rollout.get("_diagnostics") or {})
+            collect_seconds = self.distributed.all_reduce_float(
+                perf_counter() - collect_started,
+                reduction="max",
+            )
+            local_diagnostics = dict(rollout.get("_diagnostics") or {})
+            collect_diagnostics = _aggregate_rollout_diagnostics(
+                local_diagnostics,
+                self.distributed,
+            )
+            global_samples = self.distributed.sum_int(samples)
             collect_diagnostics.update(
                 {
                     "collect_seconds": collect_seconds,
-                    "collect_steps_per_second": samples / max(collect_seconds, 1e-9),
+                    "collect_steps_per_second": global_samples / max(collect_seconds, 1e-9),
                     "collect_overhead_seconds": _collect_overhead_seconds(
                         collect_seconds, collect_diagnostics
                     ),
@@ -441,30 +721,43 @@ class MAPPOTrainer:
             )
             environments[:active_envs] = next_environments
             observations[:active_envs] = next_observations
-            episodes += ended_episodes
-            rewards_seen.extend(rollout["reward"].tolist())
+            episodes += self.distributed.sum_int(ended_episodes)
+            reward_tensor = rollout["reward"]
+            reward_sum += self.distributed.all_reduce_float(
+                float(reward_tensor.sum().item()),
+                reduction="sum",
+            )
+            reward_count += self.distributed.sum_int(int(reward_tensor.numel()))
             if progress_callback:
                 progress_callback(
                     {
                         "phase": "optimizing",
-                        "steps": float(completed_steps + samples),
+                        "steps": float(completed_steps + global_samples),
                         "total_steps": float(total_steps),
-                        "progress": (completed_steps + samples) / total_steps,
+                        "progress": min(
+                            1.0,
+                            (completed_steps + global_samples) / total_steps,
+                        ),
                         "updates": float(updates),
                         "episodes": float(episodes),
                         "loss": final_loss,
                         "approximate_kl": final_kl,
                         "learning_rate": self.optimizer.param_groups[0]["lr"],
-                        "parallel_envs": float(active_envs),
+                        "parallel_envs": float(active_envs * self.distributed.world_size),
+                        "parallel_envs_per_rank": float(active_envs),
+                        "world_size": float(self.distributed.world_size),
                         **collect_diagnostics,
                     }
                 )
             optimize_started = perf_counter()
             final_update = self._update(rollout)
-            optimize_seconds = perf_counter() - optimize_started
+            optimize_seconds = self.distributed.all_reduce_float(
+                perf_counter() - optimize_started,
+                reduction="max",
+            )
             final_loss = final_update.total_loss
             final_kl = final_update.approximate_kl
-            completed_steps += samples
+            completed_steps += global_samples
             updates += 1
             progress = completed_steps / total_steps
             learning_rate = self.config.learning_rate + progress * (
@@ -488,10 +781,13 @@ class MAPPOTrainer:
                 "clip_fraction": final_update.clip_fraction,
                 "gradient_norm": final_update.gradient_norm,
                 "optimizer_steps": float(final_update.optimizer_steps),
-                "parallel_envs": float(active_envs),
+                "parallel_envs": float(active_envs * self.distributed.world_size),
+                "parallel_envs_per_rank": float(active_envs),
+                "world_size": float(self.distributed.world_size),
                 "optimize_seconds": optimize_seconds,
-                "samples_per_update": float(samples),
-                "optimize_steps_per_second": samples / max(optimize_seconds, 1e-9),
+                "samples_per_update": float(global_samples),
+                "local_samples_per_update": float(samples),
+                "optimize_steps_per_second": global_samples / max(optimize_seconds, 1e-9),
                 "optimizer_steps_per_second": final_update.optimizer_steps / max(optimize_seconds, 1e-9),
                 **collect_diagnostics,
             }
@@ -499,12 +795,13 @@ class MAPPOTrainer:
                 progress_callback(update_payload)
             if update_callback:
                 update_callback(update_payload)
+            self.distributed.barrier()
 
         return TrainingSummary(
             total_steps=completed_steps,
             updates=updates,
             episodes=episodes,
-            mean_reward=float(np.mean(rewards_seen)) if rewards_seen else 0.0,
+            mean_reward=reward_sum / max(1, reward_count),
             final_loss=final_loss,
             final_approximate_kl=final_kl,
             final_policy_loss=final_update.policy_loss,
@@ -540,11 +837,14 @@ class MAPPOTrainer:
                 raise TrainingCancelled("Agent training cancellation requested.")
             model_started = perf_counter()
             inputs = observation_to_tensors(observation, device=self.device)
-            action = self.model.act(**inputs)
+            with torch.inference_mode():
+                action = self.model.act(**inputs)
             model_seconds = perf_counter() - model_started
+            direction_cpu = action.directions.squeeze(0).detach().cpu()
+            size_cpu = action.sizes.squeeze(0).detach().cpu()
             portfolio_action = PortfolioAction(
-                action.directions.squeeze(0).cpu().numpy(),
-                action.sizes.squeeze(0).cpu().numpy(),
+                direction_cpu.numpy(),
+                size_cpu.numpy(),
             )
             loader_before = _loader_performance(environment)
             environment_started = perf_counter()
@@ -562,8 +862,8 @@ class MAPPOTrainer:
             diagnostics.add_action_counts(portfolio_action)
             diagnostics.add_execution(info.get("execution"))
             inputs_list.append(_inputs_to_cpu(inputs))
-            directions.append(action.directions.squeeze(0).detach().cpu())
-            sizes.append(action.sizes.squeeze(0).detach().cpu())
+            directions.append(direction_cpu)
+            sizes.append(size_cpu)
             log_prob.append(action.log_prob.squeeze(0).detach().cpu())
             values.append(action.value.squeeze(0).detach().cpu())
             active_masks.append(inputs["active_mask"].squeeze(0).detach().cpu())
@@ -576,9 +876,16 @@ class MAPPOTrainer:
             if terminated or truncated:
                 episodes += 1
                 reset_started = perf_counter()
-                environment = environment_factory()
-                reset_loader_before = _loader_performance(environment)
-                observation, _ = environment.reset()
+                old_environment = environment
+                replacement = environment_factory()
+                try:
+                    reset_loader_before = _loader_performance(replacement)
+                    observation, _ = replacement.reset()
+                except Exception:
+                    _close_environment(replacement)
+                    raise
+                environment = replacement
+                _close_environment(old_environment)
                 reset_seconds = perf_counter() - reset_started
                 reset_delta = _loader_performance_delta(reset_loader_before, environment)
                 reset_data_seconds = float(reset_delta.get("load_seconds") or 0.0)
@@ -630,7 +937,7 @@ class MAPPOTrainer:
         if dones[-1]:
             bootstrap = torch.zeros(())
         else:
-            with torch.no_grad():
+            with torch.inference_mode():
                 bootstrap_inputs = observation_to_tensors(observation, device=self.device)
                 bootstrap = self.model(**bootstrap_inputs).value.squeeze(0).cpu()
         reward_tensor = torch.tensor(rewards, dtype=torch.float32)
@@ -694,8 +1001,11 @@ class MAPPOTrainer:
                 raise TrainingCancelled("Agent training cancellation requested.")
             model_started = perf_counter()
             inputs = _observations_to_tensors(observations, device=self.device)
-            action = self.model.act(**inputs)
+            with torch.inference_mode():
+                action = self.model.act(**inputs)
             model_seconds = perf_counter() - model_started
+            directions_cpu = action.directions.detach().cpu()
+            sizes_cpu = action.sizes.detach().cpu()
             step_rewards = np.zeros(env_count, dtype=np.float32)
             step_dones = np.zeros(env_count, dtype=np.bool_)
             telemetry = _ParallelTelemetry()
@@ -706,8 +1016,8 @@ class MAPPOTrainer:
             environment_started = perf_counter()
             for env_index, environment in enumerate(environments):
                 portfolio_action = PortfolioAction(
-                    action.directions[env_index].cpu().numpy(),
-                    action.sizes[env_index].cpu().numpy(),
+                    directions_cpu[env_index].numpy(),
+                    sizes_cpu[env_index].numpy(),
                 )
                 loader_before = _loader_performance(environment)
                 next_observation, reward, terminated, truncated, info = environment.step(
@@ -727,9 +1037,15 @@ class MAPPOTrainer:
                 if done:
                     episodes += 1
                     reset_started = perf_counter()
+                    old_environment = environment
                     replacement = environment_factory()
-                    reset_loader_before = _loader_performance(replacement)
-                    observations[env_index], _ = replacement.reset()
+                    try:
+                        reset_loader_before = _loader_performance(replacement)
+                        observations[env_index], _ = replacement.reset()
+                    except Exception:
+                        _close_environment(replacement)
+                        raise
+                    _close_environment(old_environment)
                     reset_seconds = perf_counter() - reset_started
                     reset_delta = _loader_performance_delta(reset_loader_before, replacement)
                     step_reset_seconds += reset_seconds
@@ -751,8 +1067,8 @@ class MAPPOTrainer:
             diagnostics.data_steps += step_data_steps
             diagnostics.reset_seconds += step_reset_seconds
             inputs_list.append(_inputs_to_cpu(inputs))
-            directions.append(action.directions.detach().cpu())
-            sizes.append(action.sizes.detach().cpu())
+            directions.append(directions_cpu)
+            sizes.append(sizes_cpu)
             log_prob.append(action.log_prob.detach().cpu())
             values.append(action.value.detach().cpu())
             active_masks.append(inputs["active_mask"].detach().cpu())
@@ -773,7 +1089,7 @@ class MAPPOTrainer:
                 )
                 step_callback((rollout_index + 1) * env_count, payload)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             bootstrap_inputs = _observations_to_tensors(observations, device=self.device)
             bootstrap = self.model(**bootstrap_inputs).value.cpu()
         if dones:
@@ -812,6 +1128,147 @@ class MAPPOTrainer:
             samples,
         )
 
+
+    def _collect_rollout_vector(
+        self,
+        vector_env: Any,
+        observations: list[AgentObservation],
+        per_env_steps: int,
+        cancel_check: Callable[[], bool] | None,
+        step_callback: Callable[[int, dict[str, object]], None] | None = None,
+    ) -> tuple[dict[str, object], list[AgentObservation], int, int]:
+        self.model.eval()
+        inputs_list: list[dict[str, object]] = []
+        directions: list[Tensor] = []
+        sizes: list[Tensor] = []
+        log_prob: list[Tensor] = []
+        values: list[Tensor] = []
+        active_masks: list[Tensor] = []
+        rewards: list[np.ndarray] = []
+        dones: list[np.ndarray] = []
+        episodes = 0
+        env_count = len(observations)
+        diagnostics = RolloutDiagnostics()
+
+        for rollout_index in range(per_env_steps):
+            if cancel_check and cancel_check():
+                raise TrainingCancelled("Agent training cancellation requested.")
+            model_started = perf_counter()
+            inputs = _observations_to_tensors(observations, device=self.device)
+            with torch.inference_mode():
+                action = self.model.act(**inputs)
+            model_seconds = perf_counter() - model_started
+            directions_cpu = action.directions.detach().cpu()
+            sizes_cpu = action.sizes.detach().cpu()
+            worker_actions = [
+                (directions_cpu[index].numpy(), sizes_cpu[index].numpy())
+                for index in range(env_count)
+            ]
+            environment_started = perf_counter()
+            results = vector_env.step(worker_actions)
+            environment_wall_seconds = perf_counter() - environment_started
+            step_rewards = np.zeros(env_count, dtype=np.float32)
+            step_dones = np.zeros(env_count, dtype=np.bool_)
+            step_data_load_seconds = 0.0
+            step_data_chunks = 0
+            step_data_steps = 0
+            step_reset_seconds = 0.0
+            step_environment_seconds = 0.0
+            telemetry = _VectorTelemetry()
+            for env_index, result in enumerate(results):
+                observation = result.get("observation")
+                if observation is None:
+                    raise RuntimeError("Subprocess vector env returned no observation.")
+                observations[env_index] = observation
+                reward = float(result.get("reward") or 0.0)
+                done = bool(result.get("done") or result.get("terminated") or result.get("truncated"))
+                info = dict(result.get("info") or {})
+                step_rewards[env_index] = reward
+                step_dones[env_index] = done
+                if done:
+                    episodes += 1
+                portfolio_action = PortfolioAction(
+                    directions_cpu[env_index].numpy(),
+                    sizes_cpu[env_index].numpy(),
+                )
+                diagnostics.samples += 1
+                diagnostics.add_action_counts(portfolio_action)
+                diagnostics.add_execution(info.get("execution"))
+                telemetry.add(portfolio_action, info)
+                step_data_load_seconds += float(result.get("data_load_seconds") or 0.0)
+                step_data_chunks += int(result.get("data_chunks") or 0)
+                step_data_steps += int(result.get("data_steps") or 0)
+                step_reset_seconds += float(result.get("reset_seconds") or 0.0)
+                step_environment_seconds += float(result.get("environment_seconds") or 0.0)
+            diagnostics.model_seconds += model_seconds
+            diagnostics.environment_seconds += step_environment_seconds or environment_wall_seconds
+            diagnostics.data_load_seconds += step_data_load_seconds
+            diagnostics.chunk_count += step_data_chunks
+            diagnostics.data_steps += step_data_steps
+            diagnostics.reset_seconds += step_reset_seconds
+            inputs_list.append(_inputs_to_cpu(inputs))
+            directions.append(directions_cpu)
+            sizes.append(sizes_cpu)
+            log_prob.append(action.log_prob.detach().cpu())
+            values.append(action.value.detach().cpu())
+            active_masks.append(inputs["active_mask"].detach().cpu())
+            rewards.append(step_rewards)
+            dones.append(step_dones)
+            if step_callback:
+                payload = telemetry.payload()
+                payload.update(
+                    {
+                        "model_seconds": model_seconds,
+                        "environment_seconds": step_environment_seconds or environment_wall_seconds,
+                        "environment_wall_seconds": environment_wall_seconds,
+                        "data_load_seconds": step_data_load_seconds,
+                        "data_chunks": step_data_chunks,
+                        "data_steps": step_data_steps,
+                        "reset_seconds": step_reset_seconds,
+                        "parallel_envs": env_count,
+                        "env_backend": "subprocess",
+                    }
+                )
+                step_callback((rollout_index + 1) * env_count, payload)
+
+        with torch.inference_mode():
+            bootstrap_inputs = _observations_to_tensors(observations, device=self.device)
+            bootstrap = self.model(**bootstrap_inputs).value.cpu()
+        if dones:
+            bootstrap = torch.where(
+                torch.as_tensor(dones[-1], dtype=torch.bool),
+                torch.zeros_like(bootstrap),
+                bootstrap,
+            )
+        reward_tensor = torch.as_tensor(np.stack(rewards), dtype=torch.float32)
+        done_tensor = torch.as_tensor(np.stack(dones), dtype=torch.bool)
+        value_tensor = torch.cat([torch.stack(values), bootstrap.unsqueeze(0)], dim=0)
+        advantages, returns = compute_gae(
+            reward_tensor,
+            value_tensor,
+            done_tensor,
+            gamma=self.config.gamma,
+            gae_lambda=self.config.gae_lambda,
+        )
+        samples = int(reward_tensor.numel())
+        return (
+            {
+                "inputs": _stack_inputs(inputs_list),
+                "directions": torch.cat(directions, dim=0),
+                "sizes": torch.cat(sizes, dim=0),
+                "old_log_prob": torch.cat(log_prob, dim=0),
+                "old_values": torch.cat(values, dim=0),
+                "active_mask": torch.cat(active_masks, dim=0),
+                "reward": reward_tensor.reshape(-1),
+                "advantages": advantages.reshape(-1).detach(),
+                "returns": returns.reshape(-1).detach(),
+                "_diagnostics": diagnostics.payload(),
+            },
+            observations,
+            episodes,
+            samples,
+        )
+
     def _update(self, rollout: dict[str, object]) -> TrainingUpdateMetrics:
         steps = int(rollout["directions"].shape[0])
         final_loss = 0.0
@@ -831,7 +1288,7 @@ class MAPPOTrainer:
             for start in range(0, steps, self.config.minibatch_size):
                 indices = permutation[start : start + self.config.minibatch_size]
                 loss = compute_mappo_loss(
-                    self.model,
+                    self.update_model,
                     observation_inputs=_inputs_to_device(
                         _slice_inputs(rollout["inputs"], indices), self.device
                     ),
@@ -844,12 +1301,15 @@ class MAPPOTrainer:
                     active_mask=rollout["active_mask"][indices].to(self.device),
                     config=self.config,
                 )
-                final_loss = float(loss.total.detach().cpu())
-                final_kl = float(loss.approximate_kl.detach().cpu())
-                final_policy = float(loss.policy.detach().cpu())
-                final_value = float(loss.value.detach().cpu())
-                final_entropy = float(loss.entropy.detach().cpu())
-                final_clip = float(loss.clip_fraction.detach().cpu())
+                final_loss = float(loss.total.detach().item())
+                final_policy = float(loss.policy.detach().item())
+                final_value = float(loss.value.detach().item())
+                final_entropy = float(loss.entropy.detach().item())
+                final_clip = float(loss.clip_fraction.detach().item())
+                final_kl = self.distributed.all_reduce_float(
+                    float(loss.approximate_kl.detach().item()),
+                    reduction="max",
+                )
                 if final_kl > self.config.target_kl:
                     stop_for_kl = True
                     break
@@ -858,12 +1318,25 @@ class MAPPOTrainer:
                 gradient_norm = torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), self.config.maximum_gradient_norm
                 )
-                final_gradient = float(gradient_norm.detach().cpu())
+                final_gradient = float(gradient_norm.detach().item())
                 self.optimizer.step()
                 optimizer_steps += 1
             if stop_for_kl:
                 break
         self.model.eval()
+        reduced_metrics = self.distributed.all_reduce_floats(
+            [final_loss, final_policy, final_value, final_entropy, final_clip],
+            reduction="sum",
+        )
+        (
+            final_loss,
+            final_policy,
+            final_value,
+            final_entropy,
+            final_clip,
+        ) = [value / self.distributed.world_size for value in reduced_metrics]
+        final_gradient = self.distributed.mean_float(final_gradient)
+        optimizer_steps = int(round(self.distributed.mean_float(float(optimizer_steps))))
         return TrainingUpdateMetrics(
             final_loss,
             final_policy,
@@ -894,6 +1367,8 @@ def _stack_inputs(inputs: list[dict[str, object]]) -> dict[str, object]:
                 "active_mask",
                 "can_buy",
                 "can_sell",
+                "buy_min_size",
+                "sell_min_size",
             )
         },
     }
@@ -923,6 +1398,8 @@ def _observations_to_tensors(
                 "active_mask",
                 "can_buy",
                 "can_sell",
+                "buy_min_size",
+                "sell_min_size",
             )
         },
     }
@@ -984,6 +1461,66 @@ class _ParallelTelemetry:
         }
 
 
+
+class _VectorTelemetry:
+    def __init__(self) -> None:
+        self.reward = 0.0
+        self.nav = 0.0
+        self.cash = 0.0
+        self.envs = 0
+        self.buy_actions = 0
+        self.hold_actions = 0
+        self.sell_actions = 0
+        self.executed_orders = 0
+        self.blocked_orders = 0
+        self.blocked_reasons: dict[str, int] = {}
+        self.turnover_value = 0.0
+        self.total_fees = 0.0
+
+    def add(self, action: PortfolioAction, info: dict[str, object]) -> None:
+        self.envs += 1
+        self.reward += float(info.get("reward") or 0.0)
+        self.nav += float(info.get("net_asset_value") or 0.0)
+        self.cash += float(info.get("cash") or 0.0)
+        self.buy_actions += int(np.count_nonzero(action.directions > 0))
+        self.hold_actions += int(np.count_nonzero(action.directions == 0))
+        self.sell_actions += int(np.count_nonzero(action.directions < 0))
+        execution = info.get("execution")
+        if execution:
+            self.executed_orders += len(execution.executed_fills)
+            blocked = [fill for fill in execution.fills if fill.status == "blocked"]
+            self.blocked_orders += len(blocked)
+            for fill in blocked:
+                reason = str(fill.reason or "unknown")
+                self.blocked_reasons[reason] = self.blocked_reasons.get(reason, 0) + 1
+            self.turnover_value += float(execution.turnover_value)
+        self.total_fees += float(info.get("total_fees") or 0.0)
+
+    def payload(self) -> dict[str, object]:
+        divisor = max(1, self.envs)
+        return {
+            "reward": self.reward / divisor,
+            "nav": self.nav / divisor,
+            "cash": self.cash / divisor,
+            "buy_actions": self.buy_actions,
+            "hold_actions": self.hold_actions,
+            "sell_actions": self.sell_actions,
+            "executed_orders": self.executed_orders,
+            "blocked_orders": self.blocked_orders,
+            "blocked_reasons": self.blocked_reasons,
+            "turnover_value": self.turnover_value,
+            "total_fees": self.total_fees,
+        }
+
+
+def _close_environment(environment: AshareTradingEnv | None) -> None:
+    if environment is None:
+        return
+    close = getattr(environment, "close", None)
+    if callable(close):
+        close()
+
+
 def _loader_performance(environment: AshareTradingEnv) -> dict[str, float | int]:
     payload = getattr(environment.loader, "performance_payload", None)
     if not callable(payload):
@@ -1015,6 +1552,48 @@ def _loader_performance_delta(
     }
 
 
+def _aggregate_rollout_diagnostics(
+    local: dict[str, object],
+    distributed: DistributedTrainingContext,
+) -> dict[str, object]:
+    gathered = [dict(item or {}) for item in distributed.all_gather_object(local)]
+    samples = sum(int(item.get("collect_samples") or 0) for item in gathered)
+    result: dict[str, object] = {
+        "collect_samples": samples,
+    }
+    for name in (
+        "data_chunks",
+        "data_steps",
+        "buy_actions",
+        "hold_actions",
+        "sell_actions",
+        "executed_orders",
+        "blocked_orders",
+    ):
+        result[name] = sum(int(item.get(name) or 0) for item in gathered)
+    result["turnover_value"] = sum(
+        float(item.get("turnover_value") or 0.0) for item in gathered
+    )
+    for name in (
+        "collect_model_seconds",
+        "collect_environment_seconds",
+        "collect_data_load_seconds",
+        "collect_reset_seconds",
+    ):
+        result[name] = max((float(item.get(name) or 0.0) for item in gathered), default=0.0)
+    divisor = max(1, samples)
+    result["model_seconds"] = float(result["collect_model_seconds"]) / divisor
+    result["environment_seconds"] = float(result["collect_environment_seconds"]) / divisor
+    result["data_load_seconds"] = float(result["collect_data_load_seconds"]) / divisor
+    result["reset_seconds"] = float(result["collect_reset_seconds"]) / divisor
+    blocked_reasons: dict[str, int] = {}
+    for item in gathered:
+        for reason, count in dict(item.get("blocked_reasons") or {}).items():
+            blocked_reasons[str(reason)] = blocked_reasons.get(str(reason), 0) + int(count)
+    result["blocked_reasons"] = blocked_reasons
+    return result
+
+
 def _collect_overhead_seconds(
     collect_seconds: float,
     diagnostics: dict[str, object],
@@ -1043,6 +1622,8 @@ def _slice_inputs(inputs: dict[str, object], indices: Tensor) -> dict[str, objec
                 "active_mask",
                 "can_buy",
                 "can_sell",
+                "buy_min_size",
+                "sell_min_size",
             )
         },
     }
@@ -1072,6 +1653,8 @@ def _inputs_to_device(
                 "active_mask",
                 "can_buy",
                 "can_sell",
+                "buy_min_size",
+                "sell_min_size",
             )
         },
     }

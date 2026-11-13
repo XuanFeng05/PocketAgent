@@ -22,7 +22,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     )
     parser.add_argument(
         "--feature-dir",
-        default=str(PROJECT_ROOT / "runtime_layer" / "features"),
+        default=str(PROJECT_ROOT / "runtime_layer" / "reports" / "feature_dataset"),
         help="Feature dataset directory containing feature_parts/ and feature_parts_manifest.json.",
     )
     parser.add_argument(

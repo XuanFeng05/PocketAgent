@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Iterable, Iterator
 
 import numpy as np
 import pandas as pd
 
 from agent_layer.actions import PortfolioAction
 from agent_layer.data import AgentMarketStep, AgentTimelineLoader, TimelineKey
-from agent_layer.environment.execution import AshareExecutor, ExecutionConfig, ExecutionResult
+from agent_layer.environment.execution import (
+    AshareExecutor,
+    ExecutionConfig,
+    ExecutionResult,
+)
 from agent_layer.portfolio import PortfolioAccount
 from agent_layer.rewards import net_asset_log_return
 
@@ -33,6 +37,7 @@ class AshareTradingEnv:
         drawdown_penalty: float = 0.0,
         turnover_penalty: float = 0.0,
         invalid_action_penalty: float = 0.0,
+        enforce_action_contract: bool = False,
     ) -> None:
         self.loader = loader
         self.executor = AshareExecutor(execution_config)
@@ -51,6 +56,7 @@ class AshareTradingEnv:
         self.drawdown_penalty = float(drawdown_penalty)
         self.turnover_penalty = float(turnover_penalty)
         self.invalid_action_penalty = float(invalid_action_penalty)
+        self.enforce_action_contract = bool(enforce_action_contract)
         self._peak_nav = self.account.initial_cash
 
     @property
@@ -88,11 +94,17 @@ class AshareTradingEnv:
         market = self.current_market
         nav_before = max(self.account.net_asset_value, 1e-12)
         execution = self.executor.execute(self.account, market, action)
+        if self.enforce_action_contract:
+            self._assert_action_contract(action, execution)
+        # Freeze the executed market state before advancing time or releasing T+1 lots.
+        from evaluation_layer.backtest.valuation import account_snapshot
+        execution_snapshot = account_snapshot(self.account, market.decision_time)
         terminated = self._index >= len(self.keys) - 1
         if terminated:
             nav_after = max(self.account.net_asset_value, 1e-12)
             reward = self._reward(nav_before, nav_after, execution, elapsed_days=0.0)
             info = self._info(execution, reward=reward)
+            info["execution_snapshot"] = execution_snapshot
             self._close_stream()
             return None, reward, True, False, info
 
@@ -105,7 +117,9 @@ class AshareTradingEnv:
             (self._market.decision_time - market.decision_time).total_seconds() / 86400.0,
         )
         reward = self._reward(nav_before, nav_after, execution, elapsed_days=elapsed_days)
-        return self._observation(), reward, False, False, self._info(execution, reward=reward)
+        info = self._info(execution, reward=reward)
+        info["execution_snapshot"] = execution_snapshot
+        return self._observation(), reward, False, False, info
 
     def _reward(
         self,
@@ -121,14 +135,28 @@ class AshareTradingEnv:
         drawdown_after = max(0.0, 1.0 - nav_after / self._peak_nav)
         drawdown_increase = max(0.0, drawdown_after - drawdown_before)
         turnover_ratio = execution.turnover_value / max(nav_before, 1e-12)
-        blocked = sum(fill.status == "blocked" for fill in execution.fills)
-        invalid_ratio = blocked / max(1, len(self.loader.universe))
         hurdle_log_return = np.log1p(self.hurdle_rate_annual) * max(0.0, elapsed_days) / 365.25
         return (
             self.reward_scale * (net_asset_log_return(nav_before, nav_after) - hurdle_log_return)
             - self.drawdown_penalty * drawdown_increase
             - self.turnover_penalty * turnover_ratio
-            - self.invalid_action_penalty * invalid_ratio
+        )
+
+    @staticmethod
+    def _assert_action_contract(
+        action: PortfolioAction,
+        execution: ExecutionResult,
+    ) -> None:
+        blocked = tuple(fill for fill in execution.fills if fill.status == "blocked")
+        if not blocked:
+            return
+        details = ", ".join(
+            f"{fill.symbol}:{fill.direction.name.lower()}:{fill.requested_size:.6f}:{fill.reason}"
+            for fill in blocked
+        )
+        raise RuntimeError(
+            "A policy action marked executable by the observation contract was blocked: "
+            f"{details}. This is an action-mask/size-bound contract error."
         )
 
     def _load_market(self, key: TimelineKey) -> AgentMarketStep:
@@ -140,6 +168,11 @@ class AshareTradingEnv:
         self.account.start_trading_day(market.decision_time.date())
         self.account.mark_to_market(market.symbols, market.execution_prices)
         return market
+
+    def close(self) -> None:
+        """Release stream and current market references held by this environment."""
+        self._close_stream()
+        self._market = None
 
     def _close_stream(self) -> None:
         stream = self._market_stream
@@ -164,6 +197,7 @@ class AshareTradingEnv:
         market = self.current_market
         return {
             "decision_time": market.decision_time,
+            "valuation_time": market.decision_time,
             "stage": market.stage,
             "net_asset_value": self.account.net_asset_value,
             "cash": self.account.cash,

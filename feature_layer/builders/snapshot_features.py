@@ -99,8 +99,11 @@ class SnapshotFeatureEngine:
         snapshots: Sequence[Mapping[str, object]],
         *,
         feature_names: Sequence[str],
-    ) -> list[dict[str, float]]:
+        as_matrix: bool = False,
+    ) -> list[dict[str, float]] | np.ndarray:
         if not snapshots:
+            if as_matrix:
+                return np.zeros((0, len(feature_names)), dtype=np.float32)
             return []
         ends = np.asarray(
             [pd.Timestamp(value).value if value is not None and not pd.isna(value) else np.iinfo(np.int64).min for value in stable_ends],
@@ -252,20 +255,23 @@ class SnapshotFeatureEngine:
         result["progress"] = current_columns["progress"]
 
         clips = {field.name: field.clip for field in self.spec.market_fields}
-        outputs: list[dict[str, float]] = []
-        for row_index in range(len(snapshots)):
-            row: dict[str, float] = {}
-            for name in feature_names:
-                values = result.get(str(name))
-                value = float(values[row_index]) if values is not None else 0.0
-                if not np.isfinite(value):
-                    value = 0.0
-                bounds = clips.get(str(name))
-                if bounds is not None:
-                    value = float(np.clip(value, bounds[0], bounds[1]))
-                row[str(name)] = value
-            outputs.append(row)
-        return outputs
+        matrix = np.zeros((len(snapshots), len(feature_names)), dtype=np.float32)
+        for column_index, name in enumerate(feature_names):
+            values = result.get(str(name))
+            if values is None:
+                continue
+            column = np.asarray(values, dtype=np.float64)
+            column = np.where(np.isfinite(column), column, 0.0)
+            bounds = clips.get(str(name))
+            if bounds is not None:
+                column = np.clip(column, bounds[0], bounds[1])
+            matrix[:, column_index] = column.astype(np.float32, copy=False)
+        if as_matrix:
+            return matrix
+        return [
+            {str(name): float(matrix[row_index, column_index]) for column_index, name in enumerate(feature_names)}
+            for row_index in range(len(snapshots))
+        ]
 
     @staticmethod
     def _take(values: np.ndarray, indices: np.ndarray) -> np.ndarray:

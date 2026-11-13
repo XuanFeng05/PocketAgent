@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -32,6 +33,7 @@ from agent_layer.experiments import (
     agent_run_config_from_payload,
     build_walk_forward_splits,
     formal_run_config,
+    server_run_config,
     save_agent_checkpoint,
     select_representative_symbols,
     select_symbols,
@@ -40,6 +42,7 @@ from agent_layer.models import SingleSymbolMultiFrequencyPolicy, SingleSymbolMul
 from agent_layer.training import PPOConfig, PPOTrainer, TrainingCancelled
 from evaluation_layer.backtest import evaluate_policy
 from agent_layer.data.feature_parts import FeaturePartsDataset, validate_feature_parts_dataset
+from agent_layer.data.cache_schema import CACHE_MANIFEST_NAME, REQUIRED_RUNTIME_CONTRACT_FIELDS
 
 from app_layer.backend.data_controller import (
     _relative_or_absolute,
@@ -54,6 +57,8 @@ FEATURE_PARTS_MANIFEST_NAME = "feature_parts_manifest.json"
 DEFAULT_AGENT_MODEL_DIR = "runtime_layer/models/agent"
 DEFAULT_SMOKE_SYMBOLS = "config/universe/smoke_symbols.txt"
 DEFAULT_AGENT_RUN_DIR = "runtime_layer/runs/agent"
+DEFAULT_AGENT_CACHE_ROOT = "runtime_layer/agent_cache"
+AGENT_CACHE_CURRENT_NAME = "current.json"
 
 
 
@@ -62,6 +67,7 @@ def start_agent_cache_job(payload: dict[str, Any], jobs: Any) -> dict[str, Any]:
     active = jobs.active_job("agent_cache_build")
     if active:
         raise ValueError(f"An Agent cache build job is already active: {active['job_id']}")
+    _cleanup_pending_agent_caches()
     request = _agent_cache_request(payload)
     job_id = jobs.create_job("agent_cache_build", title="Build Agent Cache")
     jobs.update_job(
@@ -83,10 +89,12 @@ def inspect_agent_cache_request(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _run_agent_cache_job(job_id: str, request: dict[str, Any], jobs: Any) -> dict[str, Any]:
     add_log = getattr(jobs, "add_log", None)
+    final_output_dir = Path(request["output_dir"]).resolve()
+    staging_output_dir = _agent_cache_staging_dir(final_output_dir)
     if callable(add_log):
         add_log(
             job_id,
-            f"CONFIG feature_dir={request['feature_dir']}, output_dir={request['output_dir']}, workers={request['workers']}",
+            f"CONFIG feature_dir={request['feature_dir']}, output_dir={final_output_dir}, workers={request['workers']}",
         )
 
     def progress(item: dict[str, Any]) -> None:
@@ -132,7 +140,7 @@ def _run_agent_cache_job(job_id: str, request: dict[str, Any], jobs: Any) -> dic
 
     config = AgentCacheBuildConfig(
         feature_dir=request["feature_dir"],
-        output_dir=request["output_dir"],
+        output_dir=staging_output_dir,
         symbols=request.get("symbols") or None,
         frequencies=request.get("frequencies") or None,
         start=request.get("start") or None,
@@ -143,12 +151,28 @@ def _run_agent_cache_job(job_id: str, request: dict[str, Any], jobs: Any) -> dic
         reset=bool(request.get("reset")),
         max_decisions_per_symbol=request.get("max_decisions_per_symbol") or None,
     )
+    _prepare_agent_cache_staging(staging_output_dir)
+    if final_output_dir.exists() and not bool(request.get("reset")):
+        raise ValueError(
+            f"Agent Cache output already exists: {final_output_dir}. "
+            "Enable reset or choose a new output directory."
+        )
+    if bool(request.get("reset")) and final_output_dir.exists() and _agent_cache_referenced_by_resumable_run(final_output_dir):
+        raise ValueError(
+            "Refusing to reset an Agent Cache directory referenced by a queued/running/paused/interrupted run. "
+            "Choose a new output directory under runtime_layer/agent_cache/builds."
+        )
     summary = build_agent_cache(
         config,
         progress_callback=progress,
         cancel_check=lambda: jobs.is_cancel_requested(job_id),
     )
-    inspected = inspect_agent_cache(config.output_dir) if summary.get("ok") else {}
+    if summary.get("ok"):
+        _finalize_agent_cache_staging(staging_output_dir, final_output_dir, reset=bool(request.get("reset")))
+        summary = {**summary, "output_dir": str(final_output_dir)}
+    inspected = inspect_agent_cache(final_output_dir) if summary.get("ok") else {}
+    if summary.get("ok"):
+        _publish_current_agent_cache(final_output_dir, feature_dir=config.feature_dir)
     result = {**summary, "inspect": inspected}
     jobs.update_job(
         job_id,
@@ -167,9 +191,22 @@ def _agent_cache_request(payload: dict[str, Any]) -> dict[str, Any]:
         payload.get("feature_dir") or payload.get("source_feature_dir") or DEFAULT_FEATURE_DATASET_DIR
     )
     output_dir = resolve_project_path(
-        payload.get("output_dir") or payload.get("cache_dir") or "runtime_layer/agent_cache/latest"
+        payload.get("output_dir") or payload.get("cache_dir") or f"{DEFAULT_AGENT_CACHE_ROOT}/builds"
     )
-    symbols = _resolve_symbols(payload)
+    if output_dir.name.lower() == "builds":
+        output_dir = output_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = _assert_agent_cache_child(output_dir)
+    requested_symbols = _resolve_symbols(payload)
+    symbol_limit = max(0, int(payload.get("symbol_limit") or 0))
+    symbol_seed = int(payload.get("symbol_seed") or 42)
+    if requested_symbols:
+        symbols = select_symbols(requested_symbols, limit=symbol_limit, seed=symbol_seed)
+    else:
+        symbols = select_symbols(
+            FeaturePartsDataset(feature_dir).symbols,
+            limit=symbol_limit,
+            seed=symbol_seed,
+        )
     frequencies = tuple(str(value) for value in (payload.get("frequencies") or ())) or None
     stages = tuple(str(value).strip() for value in (payload.get("stages") or []) if str(value).strip()) or None
     max_decisions_raw = payload.get("max_decisions_per_symbol")
@@ -178,6 +215,8 @@ def _agent_cache_request(payload: dict[str, Any]) -> dict[str, Any]:
         "feature_dir": feature_dir,
         "output_dir": output_dir,
         "symbols": tuple(symbols) if symbols else None,
+        "symbol_limit": symbol_limit,
+        "symbol_seed": symbol_seed,
         "frequencies": frequencies,
         "start": payload.get("start") or None,
         "end": payload.get("end") or None,
@@ -192,14 +231,23 @@ def agent_spec_payload() -> dict[str, Any]:
     model = SingleSymbolMultiFrequencyPolicyConfig(
         frequency_channels={freq: 40 for freq in DEFAULT_AGENT_FREQUENCIES},
         decision_context_size=12,
-        runtime_state_size=10,
+        runtime_state_size=14,
+        size_distribution=agent_run_config_from_payload({}).runtime.size_distribution,
     )
-    smoke_config = agent_run_config_from_payload({})
-    formal_config = formal_run_config()
+    default_device = "cuda" if torch.cuda.is_available() else "cpu"
+    smoke_config = agent_run_config_from_payload({"device": default_device})
+    formal_payload = formal_run_config().payload()
+    formal_payload.pop("config_hash", None)
+    formal_payload["device"] = default_device
+    formal_config = agent_run_config_from_payload(formal_payload)
+    server_payload = server_run_config().payload()
+    server_payload.pop("config_hash", None)
+    server_payload["device"] = default_device
+    server_config = agent_run_config_from_payload(server_payload)
     return {
         "algorithm": "Single-symbol multi-frequency PPO",
         "encoder": "Independent two-layer LSTM per frequency with masked attention pooling",
-        "actor": "Shared single-stock SELL/HOLD/BUY categorical head plus Beta size head",
+        "actor": "Shared single-stock SELL/HOLD/BUY categorical head plus configurable size head",
         "critic": "Single-symbol value critic over the sampled stock episode",
         "model": asdict(model),
         "frequency_options": [
@@ -207,11 +255,12 @@ def agent_spec_payload() -> dict[str, Any]:
         ],
         "ppo": asdict(PPOConfig()),
         "execution": asdict(ExecutionConfig()),
+        "runtime": asdict(smoke_config.runtime),
         "defaults": {
             "store": DEFAULT_FEATURE_DATASET_DIR,
             "output_dir": DEFAULT_AGENT_MODEL_DIR,
             "symbols_file": DEFAULT_SMOKE_SYMBOLS,
-            "fold": 3,
+            "fold": smoke_config.fold,
             "total_steps": 128,
             "episode_days": 5,
             "validation_days": 5,
@@ -222,10 +271,20 @@ def agent_spec_payload() -> dict[str, Any]:
             "frequencies": list(smoke_config.frequencies),
         },
         "cuda_available": torch.cuda.is_available(),
+        "cuda_device_count": torch.cuda.device_count(),
+        "cuda_devices": [
+            {
+                "index": index,
+                "name": torch.cuda.get_device_name(index),
+                "memory_bytes": int(torch.cuda.get_device_properties(index).total_memory),
+            }
+            for index in range(torch.cuda.device_count())
+        ],
         "torch_version": torch.__version__,
         "profiles": {
             "smoke": smoke_config.payload(),
             "formal": formal_config.payload(),
+            "server": server_config.payload(),
         },
     }
 
@@ -242,6 +301,15 @@ def agent_run_preflight(payload: dict[str, Any]) -> dict[str, Any]:
                 f"Resolved {len(config.resolved_symbols)} symbols and locked config "
                 f"{config.config_hash[:12]}."
             ),
+        }
+    )
+    topology = _distributed_topology(config)
+    checks.append(
+        {
+            "name": "distributed_topology",
+            "status": "pass",
+            "message": topology["message"],
+            "details": topology,
         }
     )
     checks.append(
@@ -268,6 +336,8 @@ def agent_run_preflight(payload: dict[str, Any]) -> dict[str, Any]:
         "selected_fold": config.fold,
         "splits": splits.payload(),
         "device": config.device,
+        "runtime": asdict(config.runtime),
+        "distributed": topology,
         "resolved_config": config.payload(),
     }
 
@@ -284,6 +354,7 @@ def start_agent_run(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_agent_runs() -> list[dict[str, Any]]:
+    _cleanup_pending_agent_caches()
     store = _agent_run_store()
     result = []
     for item in store.list_runs():
@@ -478,7 +549,7 @@ def _model_input_contract_for_export(config: dict[str, Any], manifest: dict[str,
     contract: dict[str, Any] = {}
     source_dataset = str(config.get("store_path") or config.get("store") or DEFAULT_FEATURE_DATASET_DIR)
     try:
-        feature_input, resolution = _resolve_agent_feature_input(source_dataset)
+        feature_input, resolution = _resolve_export_feature_dataset(source_dataset)
         for candidate in (
             feature_input / "model_input_contract.json",
             feature_input.parent / "model_input_contract.json",
@@ -512,6 +583,23 @@ def _model_input_contract_for_export(config: dict[str, Any], manifest: dict[str,
     return contract
 
 
+def _resolve_export_feature_dataset(raw_path: str | Path | None) -> tuple[Path, dict[str, Any]]:
+    requested = resolve_project_path(raw_path or DEFAULT_FEATURE_DATASET_DIR)
+    if is_agent_cache_dir(requested):
+        cache_manifest = _read_json_file(requested / CACHE_MANIFEST_NAME)
+        source_feature_dir = str(cache_manifest.get("source_feature_dir") or "").strip()
+        if not source_feature_dir:
+            raise ValueError(f"Agent Cache manifest has no source_feature_dir: {requested / CACHE_MANIFEST_NAME}")
+        feature_input, resolution = _resolve_agent_feature_input(source_feature_dir)
+        return feature_input, {
+            **resolution,
+            "source": "agent_cache_source_feature_parts",
+            "agent_cache_dir": str(requested),
+            "agent_cache_manifest": str(requested / CACHE_MANIFEST_NAME),
+        }
+    return _resolve_agent_feature_input(requested)
+
+
 def _read_json_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -520,8 +608,224 @@ def _read_json_file(path: Path) -> dict[str, Any]:
     except (OSError, ValueError, json.JSONDecodeError):
         return {}
 
-def _resolve_agent_training_input(raw_path: str | Path | None) -> tuple[Path, dict[str, Any]]:
+
+def _assert_agent_cache_child(path: Path) -> Path:
+    resolved = path.resolve()
+    root = _agent_cache_root().resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Agent Cache path must be under {root}: {resolved}"
+        ) from exc
+    if resolved == root:
+        raise ValueError(f"Refusing to use Agent Cache root as an output directory: {resolved}")
+    return resolved
+
+
+def _agent_cache_staging_dir(final_output_dir: Path) -> Path:
+    final = _assert_agent_cache_child(final_output_dir)
+    return final.with_name(f"{final.name}.building")
+
+
+def _prepare_agent_cache_staging(staging_dir: Path) -> None:
+    staging = _assert_agent_cache_child(staging_dir)
+    if staging.exists():
+        if not staging.name.endswith(".building"):
+            raise ValueError(f"Refusing to clear non-staging cache directory: {staging}")
+        _remove_tree_with_retry(staging)
+
+
+def _finalize_agent_cache_staging(staging_dir: Path, final_output_dir: Path, *, reset: bool) -> None:
+    staging = _assert_agent_cache_child(staging_dir)
+    final = _assert_agent_cache_child(final_output_dir)
+    if not is_agent_cache_dir(staging):
+        raise ValueError(f"Built Agent Cache staging directory is incomplete: {staging}")
+    if final.exists():
+        if not reset:
+            raise ValueError(f"Agent Cache output already exists: {final}")
+        if final.is_dir() and not any(final.iterdir()):
+            _remove_tree_with_retry(final)
+        elif is_agent_cache_dir(final):
+            _remove_tree_with_retry(final)
+        else:
+            raise ValueError(
+                f"Refusing to replace a non-cache, non-empty Agent Cache output directory: {final}"
+            )
+    _replace_directory_with_retry(staging, final)
+
+
+def _remove_tree_with_retry(path: Path, *, attempts: int = 8) -> None:
+    last_error: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        if not path.exists():
+            return
+        try:
+            shutil.rmtree(path)
+            if not path.exists():
+                return
+        except OSError as exc:
+            last_error = exc
+        time.sleep(min(2.0, 0.25 * (attempt + 1)))
+    raise PermissionError(f"Could not remove Agent Cache directory after retries: {path}") from last_error
+
+
+def _replace_directory_with_retry(staging: Path, final: Path, *, attempts: int = 8) -> None:
+    last_error: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            staging.replace(final)
+            return
+        except OSError as exc:
+            last_error = exc
+            if final.exists() or not staging.exists():
+                break
+            time.sleep(min(2.0, 0.25 * (attempt + 1)))
+    raise PermissionError(
+        f"Could not publish Agent Cache after retries: {staging} -> {final}. "
+        "On Windows this usually means another process still holds a file handle in the cache directory."
+    ) from last_error
+
+
+def _agent_cache_root() -> Path:
+    return resolve_project_path(DEFAULT_AGENT_CACHE_ROOT)
+
+
+def _agent_cache_current_file() -> Path:
+    return _agent_cache_root() / AGENT_CACHE_CURRENT_NAME
+
+
+def _publish_current_agent_cache(cache_dir: str | Path, *, feature_dir: str | Path) -> None:
+    output = _agent_cache_current_file()
+    previous = _read_json_file(output)
+    previous_cache_dir = previous.get("cache_dir") or previous.get("output_dir")
+    cache_path = Path(cache_dir).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "cache_dir": str(cache_path),
+        "source_feature_dir": str(Path(feature_dir).resolve()),
+        "published_at": datetime.now().isoformat(),
+    }
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(output)
+    if previous_cache_dir:
+        _cleanup_unreferenced_agent_cache(previous_cache_dir, keep=cache_path)
+    _cleanup_pending_agent_caches(keep=cache_path)
+
+
+def _cleanup_unreferenced_agent_cache(cache_dir: str | Path, *, keep: Path) -> None:
+    candidate = resolve_project_path(cache_dir)
+    try:
+        candidate = candidate.resolve()
+        keep = keep.resolve()
+    except OSError:
+        return
+    if candidate == keep or not candidate.exists():
+        return
+    root = _agent_cache_root().resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return
+    if candidate == root:
+        return
+    if _agent_cache_referenced_by_resumable_run(candidate):
+        pending = candidate.with_suffix(candidate.suffix + ".pending_delete")
+        marker = pending if candidate.suffix else candidate.parent / f"{candidate.name}.pending_delete"
+        marker.write_text(datetime.now().isoformat(), encoding="utf-8")
+        return
+    if is_agent_cache_dir(candidate):
+        shutil.rmtree(candidate, ignore_errors=True)
+
+
+def _cleanup_pending_agent_caches(*, keep: Path | None = None) -> None:
+    root = _agent_cache_root()
+    if not root.exists():
+        return
+    keep_resolved = keep.resolve() if keep is not None else None
+    for marker in root.rglob("*.pending_delete"):
+        if not marker.is_file():
+            continue
+        target_name = marker.name[: -len(".pending_delete")]
+        target = marker.with_name(target_name)
+        try:
+            target = target.resolve()
+            if keep_resolved is not None and target == keep_resolved:
+                continue
+            if target.exists() and _agent_cache_referenced_by_resumable_run(target):
+                continue
+            if target.exists() and is_agent_cache_dir(target):
+                shutil.rmtree(target, ignore_errors=True)
+            if not target.exists():
+                marker.unlink(missing_ok=True)
+        except Exception:
+            continue
+
+
+def _agent_cache_referenced_by_resumable_run(cache_dir: Path) -> bool:
+    try:
+        store = _agent_run_store()
+        target = cache_dir.resolve()
+        for item in store.list_runs():
+            if item.get("status") not in {"queued", "running", "paused", "interrupted"}:
+                continue
+            config = store.read_config(str(item.get("run_id") or ""))
+            raw_path = config.get("store_path")
+            if not raw_path:
+                continue
+            if resolve_project_path(raw_path).resolve() == target:
+                return True
+    except Exception:
+        return True
+    return False
+
+
+def _resolve_current_agent_cache() -> tuple[Path, dict[str, Any]]:
+    current_file = _agent_cache_current_file()
+    payload = _read_json_file(current_file)
+    raw_cache_dir = payload.get("cache_dir") or payload.get("output_dir")
+    candidates: list[Path] = []
+    if raw_cache_dir:
+        candidates.append(resolve_project_path(raw_cache_dir))
+    root = _agent_cache_root()
+    candidates.extend([root / "current", root / "latest", root / "full"])
+    for candidate in candidates:
+        if is_agent_cache_dir(candidate):
+            return candidate.resolve(), {
+                "source": "agent_cache",
+                "requested_path": str(current_file),
+                "cache_dir": str(candidate.resolve()),
+                "current_file": str(current_file),
+                "current": payload,
+                "legacy_fallback": candidate.name in {"current", "latest", "full"} and not raw_cache_dir,
+            }
+    raise FileNotFoundError(
+        "Agent Cache is enabled, but no current cache was found. "
+        f"Build Agent Cache from the Agent Cache panel first. Expected current pointer at {current_file}."
+    )
+
+
+def _resolve_agent_training_input(
+    raw_path: str | Path | None,
+    *,
+    use_agent_cache: bool | None = None,
+) -> tuple[Path, dict[str, Any]]:
     requested = resolve_project_path(raw_path or DEFAULT_FEATURE_DATASET_DIR)
+    if use_agent_cache is True:
+        if is_agent_cache_dir(requested):
+            return requested, {
+                "source": "agent_cache",
+                "requested_path": str(requested),
+                "cache_dir": str(requested),
+                "legacy_fallback": False,
+            }
+        return _resolve_current_agent_cache()
+    if use_agent_cache is False and is_agent_cache_dir(requested):
+        raise ValueError(
+            "Use Agent Cache is disabled, but Training Dataset points to an Agent Cache. "
+            "Choose the Feature Dataset directory or enable Agent Cache."
+        )
     if is_agent_cache_dir(requested):
         return requested, {
             "source": "agent_cache",
@@ -570,6 +874,7 @@ def _validate_agent_training_input(
     config: Any | None = None,
     request: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    expected_schema_hash = _active_agent_model_input_schema_hash()
     source = str(resolution.get("source") or "")
     if source == "agent_cache":
         universe = None
@@ -580,8 +885,53 @@ def _validate_agent_training_input(
         if request is not None:
             universe = request.get("symbols") or universe
             frequencies = request.get("frequencies") or frequencies
-        return validate_agent_cache_dataset(path, universe=universe, frequencies=frequencies)
-    return validate_feature_parts_dataset(path, sample_limit=2)
+        validation = validate_agent_cache_dataset(path, universe=universe, frequencies=frequencies)
+        _append_schema_hash_check(validation, expected_schema_hash)
+        return validation
+    return validate_feature_parts_dataset(
+        path,
+        expected_schema_hash=expected_schema_hash,
+        sample_limit=0,
+    )
+
+
+def _active_agent_model_input_schema_hash() -> str | None:
+    try:
+        from feature_layer.model_input_registry import (
+            compile_model_input_blueprint,
+            load_model_input_blueprint,
+        )
+
+        compiled = compile_model_input_blueprint(load_model_input_blueprint())
+        return str(compiled.get("schema_hash") or "") or None
+    except Exception:
+        return None
+
+
+def _append_schema_hash_check(validation: dict[str, Any], expected_schema_hash: str | None) -> None:
+    if not expected_schema_hash:
+        return
+    actual = str(validation.get("schema_hash") or validation.get("summary", {}).get("schema_hash") or "")
+    ok = bool(actual) and actual == expected_schema_hash
+    validation.setdefault("checks", []).append(
+        {
+            "name": "model_schema",
+            "status": "pass" if ok else "error",
+            "message": (
+                f"Model input schema is {actual[:12]}."
+                if ok
+                else (
+                    "Agent cache schema does not match current model_input.json. "
+                    "Rebuild Feature Dataset, then rebuild Agent Cache."
+                )
+            ),
+            "schema_hash": actual,
+            "expected_schema_hash": expected_schema_hash,
+        }
+    )
+    if not ok:
+        validation["ok"] = False
+        validation["status"] = "error"
 
 def _agent_validation_error_messages(validation: dict[str, Any]) -> list[str]:
     return [
@@ -589,6 +939,25 @@ def _agent_validation_error_messages(validation: dict[str, Any]) -> list[str]:
         for item in validation.get("checks", [])
         if item.get("status") == "error"
     ]
+
+
+def _runtime_contract_check(runtime_contract: tuple[str, ...] | list[str]) -> dict[str, str]:
+    missing = sorted(set(REQUIRED_RUNTIME_CONTRACT_FIELDS).difference(str(value) for value in runtime_contract))
+    if missing:
+        return {
+            "name": "runtime_contract",
+            "status": "error",
+            "message": (
+                "Agent runtime contract is outdated; missing "
+                + ", ".join(missing)
+                + ". Rebuild Feature Dataset, then rebuild Agent Cache if cache is enabled."
+            ),
+        }
+    return {
+        "name": "runtime_contract",
+        "status": "pass",
+        "message": f"{len(tuple(runtime_contract))} runtime fields available.",
+    }
 
 
 def _agent_validation_should_force_rebuild(validation: dict[str, Any]) -> bool:
@@ -641,16 +1010,25 @@ def _agent_feature_part_dir_complete(path: Path) -> bool:
 
 def _prepare_agent_run(payload: dict[str, Any]):
     config = agent_run_config_from_payload(payload)
-    feature_input_path, input_resolution = _resolve_agent_training_input(config.store_path)
+    feature_input_path, input_resolution = _resolve_agent_training_input(
+        config.store_path,
+        use_agent_cache=config.use_agent_cache,
+    )
     if config.device == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA was requested but is not available.")
+    _distributed_topology(config)
     validation = _validate_agent_training_input(feature_input_path, input_resolution, config=config)
     validation["resolution"] = input_resolution
     if not validation["ok"]:
         messages = _agent_validation_error_messages(validation)
-        messages.append(
-            "Agent now prefers feature_parts directly. If this fails after changing Feature indicators/model_input/monthly settings, rebuild Feature Dataset so the per-symbol parts contain the current schema."
-        )
+        if input_resolution.get("source") == "agent_cache":
+            messages.append(
+                "Fix: rebuild Feature Dataset if model_input/frequency/schema changed, then build Agent Cache from the Agent Cache panel."
+            )
+        else:
+            messages.append(
+                "Fix: rebuild Feature Dataset so feature_parts contain the current model_input schema and all selected frequencies."
+            )
         raise ValueError("Agent preflight failed: " + "; ".join(messages))
     requested = _resolve_symbols(payload)
     if not requested and config.symbols_file:
@@ -681,7 +1059,17 @@ def _prepare_agent_run(payload: dict[str, Any]):
         use_market_cache=False,
         use_decision_cache=False,
     )
-    splits = build_walk_forward_splits(loader.trading_dates())
+    runtime_check = _runtime_contract_check(loader.runtime_contract)
+    validation.setdefault("checks", []).append(runtime_check)
+    if runtime_check["status"] == "error":
+        raise ValueError("Agent preflight failed: " + runtime_check["message"])
+    splits = build_walk_forward_splits(
+        loader.trading_dates(),
+        validation_days=config.split.validation_days,
+        test_days=config.split.test_days,
+        embargo_days=config.split.embargo_days,
+        folds=config.split.folds,
+    )
     locked = config.with_contract(
         symbols=loader.universe,
         validation_symbols=validation_symbols,
@@ -719,13 +1107,40 @@ def _active_agent_run(
 
 def _spawn_agent_worker(store: AgentRunStore, run_id: str) -> dict[str, Any]:
     run_dir = store.run_dir(run_id)
+    config = agent_run_config_from_payload(store.read_config(run_id))
+    topology = _distributed_topology(config)
+    process_count = int(topology["processes_per_node"])
     stdout_path = run_dir / "worker.stdout.log"
     stderr_path = run_dir / "worker.stderr.log"
-    command = [sys.executable, "-m", "agent_layer.cli.worker", "--run-dir", str(run_dir)]
+    if process_count > 1:
+        command = [
+            sys.executable,
+            "-X",
+            "faulthandler",
+            "-m",
+            "agent_layer.cli.distributed_launcher",
+            "--run-dir",
+            str(run_dir),
+            "--processes",
+            str(process_count),
+            "--master-port",
+            str(_available_local_port()),
+        ]
+    else:
+        command = [
+            sys.executable,
+            "-X",
+            "faulthandler",
+            "-m",
+            "agent_layer.cli.worker",
+            "--run-dir",
+            str(run_dir),
+        ]
     popen_kwargs: dict[str, Any] = {
         "cwd": str(resolve_project_path(".")),
         "stdin": subprocess.DEVNULL,
         "close_fds": True,
+        "env": _distributed_worker_environment(config, process_count),
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = (
@@ -744,10 +1159,101 @@ def _spawn_agent_worker(store: AgentRunStore, run_id: str) -> dict[str, Any]:
         run_id,
         status="queued",
         phase="launching",
-        message="Independent training worker launched",
+        message=(
+            f"Distributed training launched with {process_count} processes"
+            if process_count > 1
+            else "Independent training worker launched"
+        ),
         pid=process.pid,
         error=None,
+        distributed=topology,
     )
+
+
+def _distributed_topology(config: Any) -> dict[str, Any]:
+    policy = config.distributed
+    visible_gpus = int(torch.cuda.device_count()) if config.device == "cuda" else 0
+    requested = int(policy.processes_per_node)
+    if policy.strategy == "off":
+        processes = 1
+    elif policy.strategy == "auto":
+        processes = requested or (visible_gpus if visible_gpus > 1 else 1)
+    elif config.device == "cuda":
+        processes = requested or visible_gpus
+    else:
+        processes = requested
+    if processes <= 0:
+        raise ValueError(
+            "DDP process count could not be resolved. Set distributed.processes_per_node."
+        )
+    if processes > 1 and config.device == "cuda" and processes > visible_gpus:
+        raise ValueError(
+            f"DDP requested {processes} processes but only {visible_gpus} CUDA devices are visible."
+        )
+    if policy.strategy == "ddp" and processes < 2:
+        raise ValueError("DDP requires at least two worker processes.")
+    if processes > 1 and config.total_steps % processes != 0:
+        raise ValueError(
+            f"total_steps={config.total_steps} must be divisible by DDP world size {processes}."
+        )
+    backend = policy.backend
+    if backend == "auto":
+        backend = "nccl" if config.device == "cuda" else "gloo"
+    if processes > 1 and config.device == "cuda" and os.name == "nt" and backend == "nccl":
+        raise ValueError("CUDA DDP with NCCL requires Linux; Windows supports the Gloo CPU diagnostic path only.")
+    if processes > 1 and not torch.distributed.is_available():
+        raise ValueError("This PyTorch build does not include torch.distributed.")
+    if processes > 1 and backend == "nccl" and not torch.distributed.is_nccl_available():
+        raise ValueError("This PyTorch build does not include NCCL support.")
+    if processes > 1 and backend == "gloo" and not torch.distributed.is_gloo_available():
+        raise ValueError("This PyTorch build does not include Gloo support.")
+    cpu_count = max(1, int(os.cpu_count() or 1))
+    cpu_threads = int(policy.cpu_threads_per_process) or max(1, cpu_count // processes)
+    mode = "ddp" if processes > 1 else "single"
+    return {
+        "mode": mode,
+        "strategy": policy.strategy,
+        "processes_per_node": processes,
+        "visible_gpus": visible_gpus,
+        "backend": backend if processes > 1 else None,
+        "cpu_threads_per_process": cpu_threads,
+        "global_parallel_envs": int(config.parallel_envs) * processes,
+        "env_backend": getattr(config.runtime, "env_backend", "in_process"),
+        "local_rollout_samples": int(config.parallel_envs) * int(config.ppo.rollout_steps),
+        "global_rollout_samples": (
+            int(config.parallel_envs) * int(config.ppo.rollout_steps) * processes
+        ),
+        "local_minibatch_size": int(config.ppo.minibatch_size),
+        "effective_global_minibatch_size": int(config.ppo.minibatch_size) * processes,
+        "message": (
+            f"DDP will use {processes} processes, {visible_gpus} visible GPUs, "
+            f"{config.parallel_envs} environments per rank, backend={backend}."
+            if processes > 1
+            else f"Single-process training will use {config.parallel_envs} environments ({getattr(config.runtime, 'env_backend', 'in_process')} backend)."
+        ),
+    }
+
+
+def _distributed_worker_environment(config: Any, process_count: int) -> dict[str, str]:
+    environment = dict(os.environ)
+    cpu_count = max(1, int(os.cpu_count() or 1))
+    threads = int(config.distributed.cpu_threads_per_process) or max(
+        1, cpu_count // max(1, process_count)
+    )
+    environment["OMP_NUM_THREADS"] = str(threads)
+    environment["MKL_NUM_THREADS"] = str(threads)
+    if os.name == "nt":
+        environment.setdefault("USE_LIBUV", "0")
+    if config.device == "cuda" and process_count > 1:
+        environment.setdefault("TORCH_NCCL_ASYNC_ERROR_HANDLING", "1")
+        environment.setdefault("NCCL_DEBUG", "WARN")
+    return environment
+
+
+def _available_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
+        handle.bind(("127.0.0.1", 0))
+        return int(handle.getsockname()[1])
 
 
 def _refresh_run_status(store: AgentRunStore, status: dict[str, Any]) -> dict[str, Any]:
@@ -788,7 +1294,10 @@ def _agent_worker_alive(pid: int, run_dir: Path) -> bool:
         normalized_run_dir = str(run_dir.resolve()).replace("\\", "/").lower()
         normalized_command = command.replace("\\", "/")
         return (
-            "agent_layer.cli.worker" in normalized_command
+            (
+                "agent_layer.cli.worker" in normalized_command
+                or "agent_layer.cli.distributed_launcher" in normalized_command
+            )
             and "--run-dir" in normalized_command
             and (normalized_run_dir in normalized_command or run_dir.name.lower() in normalized_command)
         )
@@ -857,6 +1366,15 @@ def _checkpoint_records(run_dir: Path) -> list[dict[str, Any]]:
         training_state = manifest.get("training_state") or {}
         experiment = manifest.get("experiment") or {}
         validation = (experiment.get("validation") or {}) if isinstance(experiment, dict) else {}
+        quick_validation = (experiment.get("quick_validation") or {}) if isinstance(experiment, dict) else {}
+        display_validation = validation
+        if (
+            isinstance(quick_validation, dict)
+            and quick_validation
+            and (not isinstance(validation, dict) or validation.get("status") != "completed")
+        ):
+            display_validation = quick_validation
+        validation = display_validation if isinstance(display_validation, dict) else {}
         validation_metrics = validation.get("metrics") if isinstance(validation, dict) else None
         result.append(
             {
@@ -893,7 +1411,10 @@ def _checkpoint_manifest(path: Path) -> dict[str, Any]:
 
 def agent_preflight(payload: dict[str, Any]) -> dict[str, Any]:
     request = _agent_request(payload)
-    feature_input_path, input_resolution = _resolve_agent_training_input(request["store_path"])
+    feature_input_path, input_resolution = _resolve_agent_training_input(
+        request["store_path"],
+        use_agent_cache=bool(request.get("use_agent_cache")),
+    )
     request["store_path"] = feature_input_path
     validation = _validate_agent_training_input(feature_input_path, input_resolution, request=request)
     validation["resolution"] = input_resolution
@@ -915,8 +1436,18 @@ def agent_preflight(payload: dict[str, Any]) -> dict[str, Any]:
             use_market_cache=False,
             use_decision_cache=False,
         )
+        runtime_check = _runtime_contract_check(loader.runtime_contract)
+        checks.append(runtime_check)
+        if runtime_check["status"] == "error":
+            raise ValueError(runtime_check["message"])
         dates = loader.trading_dates()
-        splits = build_walk_forward_splits(dates)
+        splits = build_walk_forward_splits(
+            dates,
+            validation_days=request["split"]["validation_days"],
+            test_days=request["split"]["test_days"],
+            embargo_days=request["split"]["embargo_days"],
+            folds=request["split"]["folds"],
+        )
         fold = splits.folds[request["fold"] - 1]
         checks.append(
             {
@@ -976,7 +1507,10 @@ def _run_agent_training_job(
     jobs: Any,
 ) -> dict[str, Any]:
     request = _agent_request(payload)
-    feature_input_path, input_resolution = _resolve_agent_training_input(request["store_path"])
+    feature_input_path, input_resolution = _resolve_agent_training_input(
+        request["store_path"],
+        use_agent_cache=bool(request.get("use_agent_cache")),
+    )
     request["store_path"] = feature_input_path
     add_log = getattr(jobs, "add_log", None)
     jobs.update_job(
@@ -1002,7 +1536,13 @@ def _run_agent_training_job(
             validate_store=False,
         )
         dates = loader.trading_dates()
-        splits = build_walk_forward_splits(dates)
+        splits = build_walk_forward_splits(
+            dates,
+            validation_days=request["split"]["validation_days"],
+            test_days=request["split"]["test_days"],
+            embargo_days=request["split"]["embargo_days"],
+            folds=request["split"]["folds"],
+        )
         fold = splits.folds[request["fold"] - 1]
         train_dates = [date for date in dates if fold.train.start <= date <= fold.train.end]
         rng = np.random.default_rng(request["seed"])
@@ -1034,6 +1574,7 @@ def _run_agent_training_job(
                         start=train_dates[start_index],
                         end=train_dates[start_index + days - 1],
                         execution_config=ExecutionConfig(),
+                        enforce_action_contract=True,
                     )
                 except ValueError as exc:
                     last_error = exc
@@ -1046,6 +1587,7 @@ def _run_agent_training_job(
                 },
                 decision_context_size=len(loader.decision_context_names),
                 runtime_state_size=len(loader.runtime_contract),
+                size_distribution=request["runtime"]["size_distribution"],
             )
         )
         ppo_config = PPOConfig()
@@ -1140,6 +1682,7 @@ def _run_agent_training_job(
             start=validation_dates[0],
             end=validation_dates[-1],
             execution_config=ExecutionConfig(),
+            enforce_action_contract=True,
         )
         last_validation_log = -1
 
@@ -1219,34 +1762,25 @@ def _run_agent_training_job(
 
 
 def _agent_request(payload: dict[str, Any]) -> dict[str, Any]:
-    store_path = resolve_project_path(payload.get("store_path") or payload.get("store"), DEFAULT_FEATURE_DATASET_DIR)
+    run_config = agent_run_config_from_payload(payload)
+    store_path = resolve_project_path(payload.get("store_path") or payload.get("store") or run_config.store_path)
     symbols = _resolve_symbols(payload)
-    fold = int(payload.get("fold") or 3)
-    if not 1 <= fold <= 3:
-        raise ValueError("Agent fold must be 1, 2, or 3.")
-    total_steps = int(payload.get("total_steps") or 5_000_000)
-    episode_days = int(payload.get("episode_days") or 252)
-    validation_days = int(payload.get("validation_days") or 126)
-    if total_steps <= 0 or episode_days <= 0 or validation_days <= 0:
-        raise ValueError(
-            "Training steps, episode days, and validation days must be positive."
-        )
-    device = str(payload.get("device") or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = run_config.device
     if device == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA was requested but is not available.")
-    if device not in {"cpu", "cuda"}:
-        raise ValueError("Agent device must be cpu or cuda.")
     output_raw = payload.get("output_path") or payload.get("output")
-    seed_raw = payload.get("seed")
     return {
         "store_path": store_path,
         "symbols": symbols,
-        "frequencies": tuple(payload.get("frequencies") or DEFAULT_AGENT_FREQUENCIES),
-        "fold": fold,
-        "total_steps": total_steps,
-        "episode_days": episode_days,
-        "validation_days": validation_days,
-        "seed": int(42 if seed_raw is None or seed_raw == "" else seed_raw),
+        "frequencies": run_config.frequencies,
+        "fold": run_config.fold,
+        "total_steps": run_config.total_steps,
+        "episode_days": run_config.episode_days,
+        "validation_days": run_config.validation_days,
+        "split": asdict(run_config.split),
+        "runtime": asdict(run_config.runtime),
+        "use_agent_cache": run_config.use_agent_cache,
+        "seed": run_config.seed,
         "device": device,
         "output_path": resolve_project_path(output_raw) if output_raw else None,
     }

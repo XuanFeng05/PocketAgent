@@ -166,8 +166,9 @@ def _aggregate_intraday(
     group_cols = _meta_group_columns(working)
     for _, day_frame in working.groupby(group_cols + [working["datetime"].dt.date], sort=False, dropna=False):
         day_frame = day_frame.copy()
-        day_frame["_bucket"] = range(len(day_frame))
-        day_frame["_bucket"] = day_frame["_bucket"] // source_rows
+        day_frame["_bucket"] = intraday_session_buckets(
+            day_frame["datetime"], target_minutes=target_minutes, base_minutes=base_minutes,
+        )
         result_parts.append(
             _aggregate_groups(
                 day_frame,
@@ -180,6 +181,31 @@ def _aggregate_intraday(
     if not result_parts:
         return _empty_aggregated_frame()
     return pd.concat(result_parts, ignore_index=True).sort_values(_sort_columns()).reset_index(drop=True)
+
+
+def intraday_session_buckets(
+    times: pd.Series, *, target_minutes: int, base_minutes: int,
+) -> pd.Series:
+    """Bucket completed bars by exchange clock, independently of missing rows.
+
+    The morning and afternoon sessions each contain 120 trading minutes.
+    A timestamp is a bar end, so 09:45 belongs to the 09:30--09:45 bucket.
+    Off-grid / auction rows are rejected instead of shifting every later bar.
+    """
+    minutes = times.dt.hour * 60 + times.dt.minute
+    morning = minutes.gt(570) & minutes.le(690)
+    afternoon = minutes.gt(780) & minutes.le(900)
+    elapsed = (minutes - 570).where(morning, minutes - 780)
+    valid = (
+        (morning | afternoon)
+        & elapsed.mod(base_minutes).eq(0)
+        & times.dt.second.eq(0)
+        & times.dt.microsecond.eq(0)
+        & times.dt.nanosecond.eq(0)
+    )
+    if not valid.all():
+        raise ValueError(f"Intraday bars are outside the trading-session grid: {times.loc[~valid].head(3).tolist()}")
+    return ((elapsed - 1) // target_minutes + afternoon.astype(int) * (120 // target_minutes)).astype(int)
 
 
 def _aggregate_by_period(

@@ -1,5 +1,41 @@
 # App Layer
 
+The default `/` page is now the CPU strategy research workspace. It supports
+synthetic demo, CSV and read-only local daily market data, using the shared
+backtest executor for a rule strategy, cash and buy-and-hold baselines.
+Legacy data/training pages remain at `/index.html`. Neural-network routes load
+their optional dependencies only when called; the research dashboard does not
+require PyTorch. See `docs/CPU_RESEARCH_GUIDE.zh-CN.md` for setup and limits.
+
+Research endpoints:
+- `GET /api/research/spec`
+- `POST /api/research/preview`
+- `POST /api/research/start`
+- `GET /api/research/runs`
+- `GET /api/research/runs/<job_id>`
+- `POST /api/research/runs/<job_id>/cancel`
+- `GET /api/research/runs/<job_id>/trials/<candidate_id>` (batch report on demand)
+- `POST /api/research/offline/prepare`
+- `POST /api/research/offline/aggregate`
+- `POST /api/research/resume`
+
+Research supports single runs, bounded parameter batches and chronological
+walk-forward validation. Training windows select parameters; subsequent
+validation windows and the reserved final holdout never rank candidates.
+Each validation account is independent. FIFO reporting distinguishes matched
+fragments, sell orders and complete position round trips. See
+`docs/PARAMETER_RESEARCH_GUIDE.zh-CN.md` for the CPU budget and report contracts.
+
+The same research API also exposes vectorized training-prefix screening,
+independent per-symbol comparisons, shared-cash portfolio runs, explicit
+point-in-time market/industry context, robustness diagnostics, and offline
+checksummed task exchange. See `docs/FULL_RESEARCH_WORKFLOWS.zh-CN.md`.
+
+HTTP research requests and reports live under `runtime_layer/research`.
+Completed and failed requests are persisted. Orphaned requests are shown as
+interrupted after their owning process/session disappears; another live process
+is not treated as interrupted merely because this server does not own its job.
+
 ## Responsibility
 
 The app layer is the local user interface and API orchestration layer.

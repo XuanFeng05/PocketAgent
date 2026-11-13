@@ -29,3 +29,32 @@ Thumbs.db
 # Local env files
 .env
 .env.*
+
+# Local experiments and machine-only coordination/restore records
+/_tmp_*.py
+/plans/triple_screen/WAITING_DATA.json
+/docs/legacy/PocketAgent_old_archive.json
+
+# Downloaded market data, generated stores and model/checkpoint binaries
+*.parquet
+*.arrow
+*.feather
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+
+# Local secrets and generated archives
+*.pem
+*.key
+*.pfx
+*.p12
+*.zip
+*.tar
+*.tar.gz
+*.7z

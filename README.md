@@ -4,6 +4,8 @@ CPU-first A-share strategy research and backtesting. 当前重点是在已有本
 
 **当前状态与云端接手入口：[PROJECT_STATUS.zh-CN.md](PROJECT_STATUS.zh-CN.md)。** 早期 docs/plans 保留历史决策与实验摘要，其中的完成声明应结合最新状态说明及实际代码核对。
 
+云端美股下载与研究同步记录见 [CLOUD_ACCEPTANCE](plans/triple_screen/CLOUD_ACCEPTANCE.zh-CN.md) 和 [DOWNLOAD_SOURCES](plans/triple_screen/DOWNLOAD_SOURCES.zh-CN.md)。美股数据口径与本地 A 股前复权口径隔离；Git 不包含云端原始行情。
+
 ## 仓库范围
 
 包含源码、策略配置、股票代码清单、合成测试和研究说明。**不包含下载的行情、数据库、模型权重、运行结果、虚拟环境、缓存、论文或个人本机配置。** `runtime_layer/` 只有说明文件进入 Git。

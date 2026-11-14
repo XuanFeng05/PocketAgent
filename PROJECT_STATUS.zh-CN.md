@@ -79,3 +79,9 @@ node tests/frontend/test_triple_ui.js
 5. 保留本地研究核心及价格口径，最终需要本地浏览器验证的内容给出可执行检查清单。
 
 `docs/`、`plans/` 的早期报告保留为历史，若与本文或当前代码矛盾，应记录更正，不把缺失的本地工件当作云端已验证事实。
+
+## 云端同步状态（2026-11-14）
+
+云端 `codex/us500-acceptance` 分支已完成 Yahoo US500 数据和研究工程验收。云端原始数据没有提交 Git，因此本地尚未复制行情或运行工件；已同步下载口径和合并边界到 `plans/triple_screen/CLOUD_ACCEPTANCE.zh-CN.md`。Git fetch 受当前网络 TLS EOF 阻断，云端代码提交尚未直接合并；后续应在临时 worktree 逐文件合并 Yahoo 下载入口，避免覆盖本地三重滤网页面修复。
+
+云端数据可用于美股工程验证，不替代本地 A 股100股结果；Yahoo `adjclose/vendor_close` 与 BaoStock `adjustflag=2` 不同，市场规则、日历和成本保持隔离。

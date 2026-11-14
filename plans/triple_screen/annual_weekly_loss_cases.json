@@ -1,0 +1,5 @@
+[
+  {"id": "primary", "label": "原版周线入场和退出", "settings": {}, "variant": "full"},
+  {"id": "exit_off", "label": "保留入场但取消周线退出", "settings": {}, "variant": "drop_weekly_exit"},
+  {"id": "loss_exit", "label": "周转弱且前收盘未盈利才退出", "settings": {}, "variant": "weekly_exit_loss_only"}
+]

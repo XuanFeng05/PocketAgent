@@ -4,6 +4,8 @@ CPU-first strategy research and backtesting. 保留原A股100股研究；在 `co
 
 **当前状态与云端接手入口：[PROJECT_STATUS.zh-CN.md](PROJECT_STATUS.zh-CN.md)。** 早期 docs/plans 保留历史决策与实验摘要，其中的完成声明应结合最新状态说明及实际代码核对。
 
+本地100股的 [年度周线退出研究](plans/triple_screen/ANNUAL_WEEKLY_RESULTS.zh-CN.md) 已完成2022–2025四组、连续持仓及单一条件退出假设。新增3100任务、复用400，最终556项测试通过；默认策略保持原版。分析和离线HTML生成脚本在 `plans/triple_screen`，数据与运行工件保留本机。
+
 2026-11-14：较早 US100 bundle 已离线集成，本地继续完成周线入场／退出四组对照。见 [bundle 审查](plans/triple_screen/BUNDLE_REVIEW.zh-CN.md) 和 [本地研究结果](plans/triple_screen/WEEKLY_COMPONENT_RESULTS.zh-CN.md)。原策略默认保持，新增组件案例由 CLI/API 读取配置运行。
 
 后续 US500 云端下载与研究摘要见 [CLOUD_ACCEPTANCE](plans/triple_screen/CLOUD_ACCEPTANCE.zh-CN.md) 和 [DOWNLOAD_SOURCES](plans/triple_screen/DOWNLOAD_SOURCES.zh-CN.md)；这两份摘要不代表后续 US500 代码或原始数据已合入当前分支。美股数据口径与本地 A 股前复权口径隔离；Git 不包含云端原始行情。

@@ -1,5 +1,13 @@
 # PocketAgent 当前状态与云端交接
 
+## 2026-11-14：年度周线退出研究已接续
+
+在原本地100股前复权上完成2022–2025逐年四组对照及连续持仓对照，另测试一个明确后验的“前收盘未浮盈才周退出”假设。新增3100任务、复用既有400，全部成功；新实现的1000份旧策略控制结果逐对象一致，最终完整回归556 passed、3 skipped。没有下载或安装，默认策略保持full。
+
+核心结论：周退出在本样本四年都降低平均回撤；收益效果随年度、跨年持仓及少数大赢家变化。条件退出假设未同时保住防守与捕捉上涨，不替换原版。详见 [年度研究结果](plans/triple_screen/ANNUAL_WEEKLY_RESULTS.zh-CN.md) 与 [探索协议](plans/triple_screen/ANNUAL_WEEKLY_PROTOCOL.zh-CN.md)。本机离线可视报告在 `runtime_layer/reports/annual_weekly_analysis/report.html`，工件不随Git上传。
+
+## 此前bundle整合状态
+
 最新本地核对：2026-11-14，集成分支 `codex/bundle-review-research`。已离线验证并导入用户提供的 US100 bundle（`bf0c0ab`，27 文件，基线 `21cd849`），接续本地修复及云端状态摘要提交 `edfcad0`。bundle 没有原始行情，也不包含后来的 US500 多周期研究代码。下方云端下载、收益及测试数字保留为交付方记录，不能当作本机复现。
 
 本地新增研究将周线入场过滤与周线退出拆为四组固定对照，使用原 100 股前复权数据、单边 10bps，分别评价 2022–2024 与 2025；2025 已被先前实验查看。协议、结果和源码验收见 [WEEKLY_COMPONENT_PROTOCOL](plans/triple_screen/WEEKLY_COMPONENT_PROTOCOL.zh-CN.md)、[WEEKLY_COMPONENT_RESULTS](plans/triple_screen/WEEKLY_COMPONENT_RESULTS.zh-CN.md)、[BUNDLE_REVIEW](plans/triple_screen/BUNDLE_REVIEW.zh-CN.md)。没有改变默认策略，没有下载行情或安装依赖。新增两种组件对照可经 CLI/API 使用，页面原有十案例快捷菜单保持原样。

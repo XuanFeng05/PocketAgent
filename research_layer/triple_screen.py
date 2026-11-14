@@ -18,6 +18,7 @@ RESEARCH_VARIANTS = {
     "drop_weekly": ("weekly_direction_and_exit",),
     "drop_weekly_entry": ("weekly_direction",),
     "drop_weekly_exit": ("weekly_exit",),
+    "weekly_exit_loss_only": ("weekly_exit_when_price_profitable",),
     "drop_pullback": ("daily_force_pullback",),
     "drop_trigger": ("prior_high_breakout",),
 }
@@ -97,7 +98,7 @@ def _tradeable(row: dict) -> bool:
 
 
 def run_triple_screen(bars, calendar, settings=None, *, start=None, end=None, variant="full") -> dict:
-    """Evaluate v1 or an explicitly labelled single-filter research ablation.
+    """Evaluate v1 or an explicitly labelled exploratory rule variation.
 
     All variants retain identical feature calculation, readiness, market-specific
     entry-day stops, costs and initial-stop accounting. Disabled rules never
@@ -188,7 +189,10 @@ def run_triple_screen(bars, calendar, settings=None, *, start=None, end=None, va
 
         if old_exposure:
             if variant not in {"drop_weekly", "drop_weekly_exit"} and not observed["weekly_up"] and pending_exit is None:
-                pending_exit = "weekly_filter_invalidated"
+                # The conditional rule uses only the completed prior close.
+                # A pending exit is already latched and never reconsidered here.
+                if variant != "weekly_exit_loss_only" or last_close <= float(open_trade["adjusted_entry_price"]):
+                    pending_exit = "weekly_filter_invalidated"
             exit_price, phase, reason = None, None, None
             if tradeable:
                 if pending_exit is not None:
@@ -330,11 +334,16 @@ def _variant_assumptions(variant: str, *, is_us=False) -> list[str]:
     elif variant == "drop_weekly_exit":
         assumptions[4] = "Initial stop remains fixed; weekly-filter invalidation does not force an exit in drop_weekly_exit."
         assumptions.append("drop_weekly_exit removes only the weekly-invalidated exit; the original weekly direction and negative daily EFI entry filters and prior-high breakout remain active. Completed-week warmup and observed indicator fields are unchanged.")
+    elif variant == "weekly_exit_loss_only":
+        assumptions[4] = "Initial stop remains fixed; while weekly direction is invalid, a new weekly exit is latched only when the completed previous daily close is at or below this trade's adjusted entry price, then executes at the next tradable open."
+        assumptions.append("weekly_exit_loss_only retains full entry rules and checks the condition each day, without requiring a newly completed week. The comparison is price profit before costs, includes equality, and never uses today's open/high/low/close. Any pending weekly, T+1 or stop exit remains latched through rebounds and non-tradeable bars.")
     elif variant == "drop_pullback":
         assumptions.append("drop_pullback removes only the negative daily EFI requirement; the weekly direction filter, breakout trigger and weekly-invalidated exit remain active.")
     elif variant == "drop_trigger":
         assumptions[3] = "drop_trigger enters at the next tradable candidate session's open without requiring a prior-high breakout; a nonpositive stop distance at that open rejects the candidate."
         assumptions.append("The candidate still expires after one session and requires the original weekly direction and negative daily EFI; it is not held indefinitely through a suspension.")
-    if variant != "full":
+    if variant == "weekly_exit_loss_only":
+        assumptions.append("This post-hoc exploratory hypothesis was motivated by already-inspected event outcomes; it is not an untouched validation result or a replacement for frozen full v1.")
+    elif variant != "full":
         assumptions.append("This labelled filter ablation is an exploratory comparison, not a replacement for the frozen full v1 strategy.")
     return assumptions

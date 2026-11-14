@@ -55,7 +55,7 @@ def normalize_triple_config(config: dict) -> dict:
         raise ValueError("Triple Screen configuration must be an object.")
     settings = resolve_triple_settings(config.get("settings"))
     variant = config.get("variant", "full")
-    if variant not in {"full", "drop_weekly", "drop_weekly_entry", "drop_weekly_exit", "drop_pullback", "drop_trigger"}:
+    if variant not in {"full", "drop_weekly", "drop_weekly_entry", "drop_weekly_exit", "weekly_exit_loss_only", "drop_pullback", "drop_trigger"}:
         raise ValueError("Unknown Triple Screen research variant.")
     if config.get("adjust", "pre") != "pre":
         raise ValueError("Triple Screen technical research requires adjust=pre.")

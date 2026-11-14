@@ -23,7 +23,7 @@ from strategy_layer.triple_screen import resolve_triple_settings
 
 
 SCOPE = "exploratory_study"
-VARIANTS = {"full", "drop_weekly", "drop_weekly_entry", "drop_weekly_exit", "drop_pullback", "drop_trigger"}
+VARIANTS = {"full", "drop_weekly", "drop_weekly_entry", "drop_weekly_exit", "weekly_exit_loss_only", "drop_pullback", "drop_trigger"}
 OVERRIDES = {"macd_fast", "macd_slow", "macd_signal", "force_span"}
 CONFIG_KEYS = {"schema_version", "mode", "source_type", "source_path", "calendar_path", "symbols",
                "settings", "adjust", "cost_scenarios_bps", "research_scope", "notes", "start", "end", "max_tasks"}

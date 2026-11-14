@@ -20,6 +20,7 @@ from research_layer.technical import normalize_technical_bars
 
 VERSION = "user_trend_ema_efi_atr_pre_v1"
 TOLERANCE = 1e-12
+ENTRY_COMBINATIONS = frozenset({"OR", "AND_EXPANDED", "AND_BAND"})
 SETTINGS = {"version": VERSION, "ema_periods": [13,26], "efi_periods": [2,13],
             "activation_atr": 1.0, "trailing_drawdown_atr": .25, "hard_stop_atr": .5,
             "ema_exit_closes": 3, "ema_count_scope": "observed_closes_after_entry",
@@ -86,7 +87,7 @@ def _finite_or_none(value):
     return float(value) if value is not None and pd.notna(value) and math.isfinite(float(value)) else None
 
 
-def _observe(row):
+def _observe(row, *, entry_combination="OR"):
     ready = _truth(row["indicators_ready"], "indicators_ready")
     names = ("daily_ema13", "daily_ema26", "atr", "efi2", "efi13", "efi2_previous", "efi2_previous2",
              "weekly_ema13", "weekly_ema26", "weekly_ema13_slope", "weekly_ema26_slope")
@@ -116,11 +117,14 @@ def _observe(row):
                     and ratio is not None and ratio < .5)
     branch_b = ready and atr > 0 and lower-atr <= low <= upper and efi_recovery
     weekly_up = ready and out["weekly_ema13_slope"] > 0 and out["weekly_ema26_slope"] > 0
+    entry_rule = {"OR": branch_a or branch_b,
+                  "AND_EXPANDED": branch_b,
+                  "AND_BAND": branch_a and branch_b}[entry_combination]
     out.update(band_lower=lower, band_upper=upper,
                atr_band_lower=lower-atr if lower is not None and atr is not None else None,
                efi_distance_ratio=ratio, efi_recovery=bool(efi_recovery),
                branch_a_band_touch=bool(branch_a), branch_b_atr_efi=bool(branch_b), weekly_up=bool(weekly_up),
-               entry_ready=bool(ready and atr > 0 and weekly_up and _tradeable(row) and (branch_a or branch_b)))
+               entry_ready=bool(ready and atr > 0 and weekly_up and _tradeable(row) and entry_rule))
     return out
 
 
@@ -180,7 +184,10 @@ def _walk_path(position, row, *, path, can_sell, blocked_suffix, pending_exit):
     return None, pending_exit, trace
 
 
-def run_user_trend(bars, calendar, *, start, end, entry_mode="next_open", intraday_path="ohlc", cost_bps=10, atr_period=14):
+def run_user_trend(bars, calendar, *, start, end, entry_mode="next_open", intraday_path="ohlc", cost_bps=10, atr_period=14,
+                   entry_combination="OR"):
+    if not isinstance(entry_combination, str) or entry_combination not in ENTRY_COMBINATIONS:
+        raise ValueError("entry_combination must be OR, AND_EXPANDED or AND_BAND")
     if entry_mode not in {"next_open", "signal_close"}:
         raise ValueError("entry_mode must be next_open or signal_close")
     if intraday_path not in {"ohlc", "olhc"}:
@@ -195,7 +202,7 @@ def run_user_trend(bars, calendar, *, start, end, entry_mode="next_open", intrad
     if len(features) != len(source) or not features["datetime"].reset_index(drop=True).equals(source["datetime"].reset_index(drop=True)):
         raise ValueError("Feature dates/order must preserve the normalized source")
     rows = features.to_dict("records")
-    observations = [_observe(row) for row in rows]
+    observations = [_observe(row, entry_combination=entry_combination) for row in rows]
     indices = [i for i,row in enumerate(rows) if start_date <= row["datetime"] <= end_date]
     if not indices:
         raise ValueError("No daily bars in evaluation range")
@@ -347,15 +354,21 @@ def run_user_trend(bars, calendar, *, start, end, entry_mode="next_open", intrad
                    entry_day_price_stop_count=sum(t["entry_day_price_stop_touch"] for t in trades))
     settings = {**SETTINGS, "entry_mode": entry_mode, "intraday_path": intraday_path,
                 "cost_bps": float(cost_bps), "atr_period": int(atr_period),
+                "entry_combination": entry_combination,
                 "ema_periods": SETTINGS["ema_periods"].copy(), "efi_periods": SETTINGS["efi_periods"].copy()}
     diagnostics = {"signals": len(signals), "accepted_signals": sum(s["status"] != "ignored" for s in signals),
                    "signal_status_counts": dict(Counter(s["status"] for s in signals)),
                    "ignored_reasons": dict(Counter(s["reason"] for s in signals if s["status"] == "ignored")),
                    "closed_exit_reasons": dict(Counter(t["exit_reason"] for t in closed)),
                    "cash_only": not trades, "path_scope": "scenario, not upper/lower bound", "win_tolerance": TOLERANCE}
+    assumptions = ASSUMPTIONS.copy()
+    if entry_combination == "AND_EXPANDED":
+        assumptions[2] = "Entry requires the daily low inside the EMA band or no more than one ATR below its lower edge, AND negative, twice-rising EFI2 with abs(today)/abs(yesterday)<0.5. This AND_EXPANDED policy requires EFI on every entry and preserves the expanded price range. EFI13 is informational only."
+    elif entry_combination == "AND_BAND":
+        assumptions[2] = "Entry requires the daily low inside the EMA13/EMA26 band, AND negative, twice-rising EFI2 with abs(today)/abs(yesterday)<0.5. This AND_BAND policy excludes prices below the EMA band, including the one-ATR extension. EFI13 is informational only."
     return {"schema_version": 1, "mode": "user_trend", "strategy": VERSION, "symbol": str(source.iloc[0]["symbol"]),
             "price_basis": "pre", "return_basis": "forward_adjusted_long_cash_index",
             "requested_start": start_date.date().isoformat(), "requested_end": end_date.date().isoformat(),
             "start": equity[0]["date"], "end": equity[-1]["date"], "bars": len(equity),
             "settings": settings, "metrics": metrics, "equity_curve": equity, "trades": trades, "fills": fills,
-            "signals": signals, "decisions": decisions, "diagnostics": diagnostics, "assumptions": ASSUMPTIONS.copy()}
+            "signals": signals, "decisions": decisions, "diagnostics": diagnostics, "assumptions": assumptions}

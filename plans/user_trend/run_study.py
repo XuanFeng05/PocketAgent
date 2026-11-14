@@ -97,13 +97,15 @@ def run(config_path,output):
             if implementation()!=frozen_implementation or sha(config_path)!=freeze["config_sha256"]:
                 raise ValueError("Implementation/config changed after registration")
             record={"case_id":case["id"],"symbol":symbol,"entry_mode":case["entry_mode"],"intraday_path":case["intraday_path"],"cost_bps":case["cost_bps"],
+                    "entry_combination":case.get("entry_combination","OR"),
                     "input_sha256":inputs[symbol]["sha256"],"calendar_sha256":calendar_hash}
             result_path=destination/"cases"/case["id"]/(symbol.replace(".","_")+".json")
             try:
                 bars=frames[symbol]
                 strategy=run_user_trend(bars,calendar,start=config["start"],end=config["end"],
                                         entry_mode=case["entry_mode"],intraday_path=case["intraday_path"],
-                                        cost_bps=case["cost_bps"],atr_period=config["atr_period"])
+                                        cost_bps=case["cost_bps"],atr_period=config["atr_period"],
+                                        entry_combination=case.get("entry_combination","OR"))
                 dates=pd.to_datetime(bars["datetime"])
                 evaluation=bars.loc[dates.between(strategy["start"],strategy["end"])].copy()
                 warmup=bars.loc[dates.lt(strategy["start"])].copy()

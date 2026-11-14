@@ -16,6 +16,8 @@ from strategy_layer.triple_screen import resolve_triple_settings
 RESEARCH_VARIANTS = {
     "full": (),
     "drop_weekly": ("weekly_direction_and_exit",),
+    "drop_weekly_entry": ("weekly_direction",),
+    "drop_weekly_exit": ("weekly_exit",),
     "drop_pullback": ("daily_force_pullback",),
     "drop_trigger": ("prior_high_breakout",),
 }
@@ -70,7 +72,7 @@ def _feature_values(row: dict) -> dict:
     known = row["weekly_available_at"]
     if ready:
         known = pd.Timestamp(known)
-        cutoff = datetime.combine(pd.Timestamp(row["datetime"]).date(), time(15))
+        cutoff = pd.Timestamp(row.get("session_close", datetime.combine(pd.Timestamp(row["datetime"]).date(), time(15))))
         if pd.isna(known) or known.tzinfo is not None or known > cutoff:
             raise ValueError("Weekly features are unavailable at the decision close.")
         out["weekly_available_at"] = known.isoformat()
@@ -97,8 +99,9 @@ def _tradeable(row: dict) -> bool:
 def run_triple_screen(bars, calendar, settings=None, *, start=None, end=None, variant="full") -> dict:
     """Evaluate v1 or an explicitly labelled single-filter research ablation.
 
-    All variants retain identical feature calculation, readiness, T+1, costs and
-    initial-stop accounting. Disabled rules never overwrite observed features.
+    All variants retain identical feature calculation, readiness, market-specific
+    entry-day stops, costs and initial-stop accounting. Disabled rules never
+    overwrite observed features.
     """
     if not isinstance(variant, str) or variant not in RESEARCH_VARIANTS:
         raise ValueError(f"variant must be one of {', '.join(RESEARCH_VARIANTS)}.")
@@ -159,7 +162,7 @@ def run_triple_screen(bars, calendar, settings=None, *, start=None, end=None, va
         if not observed["indicators_ready"]:
             raise ValueError("Indicators became unavailable after evaluation began.")
         day = row["datetime"].date().isoformat()
-        decision_time = datetime.combine(previous["datetime"].date(), time(15)).isoformat()
+        decision_time = pd.Timestamp(previous.get("session_close", datetime.combine(previous["datetime"].date(), time(15)))).isoformat()
         opening, high, low, close = (float(row[name]) for name in ("open", "high", "low", "close"))
         last_close = float(previous["close"])
         old_exposure = exposure
@@ -167,13 +170,13 @@ def run_triple_screen(bars, calendar, settings=None, *, start=None, end=None, va
         today_cost_before = costs
         tradeable = _tradeable(row)
         previous_tradeable = _tradeable(previous)
-        if variant == "drop_weekly":
+        if variant in {"drop_weekly", "drop_weekly_entry"}:
             entry_rule_passed = observed["force_index_2"] < 0 and previous_tradeable
         elif variant == "drop_pullback":
             entry_rule_passed = observed["weekly_up"] and previous_tradeable
         else:
             # Preserve the original entry gate exactly for the full baseline
-            # and when only the subsequent breakout trigger is removed.
+            # and when only the weekly exit or breakout trigger is removed.
             entry_rule_passed = observed["entry_ready"] and previous_tradeable
         day_decision = {"date": day, "decision_time": decision_time, **observed,
                         "research_variant": variant, "disabled_filters": disabled_filters,
@@ -184,7 +187,7 @@ def run_triple_screen(bars, calendar, settings=None, *, start=None, end=None, va
                         "ambiguous_intraday_order": False}
 
         if old_exposure:
-            if variant != "drop_weekly" and not observed["weekly_up"] and pending_exit is None:
+            if variant not in {"drop_weekly", "drop_weekly_exit"} and not observed["weekly_up"] and pending_exit is None:
                 pending_exit = "weekly_filter_invalidated"
             exit_price, phase, reason = None, None, None
             if tradeable:
@@ -254,16 +257,30 @@ def run_triple_screen(bars, calendar, settings=None, *, start=None, end=None, va
                 if low <= stop:
                     # Daily OHLC cannot prove path order; choose the declared
                     # conservative T+1 outcome, persist it through suspensions.
-                    pending_exit = "entry_day_stop_t_plus_one"
-                    signal["ambiguous_intraday_order"] = True
-                    open_trade["ambiguous_intraday_order"] = True
-                    day_decision["ambiguous_intraday_order"] = True
-                    event["ambiguous_intraday_order"] = True
+                    ambiguous = not resolved.is_us or phase == "intraday"
+                    signal["ambiguous_intraday_order"] = ambiguous
+                    open_trade["ambiguous_intraday_order"] = ambiguous
+                    day_decision["ambiguous_intraday_order"] = ambiguous
+                    event["ambiguous_intraday_order"] = ambiguous
+                    if resolved.is_us:
+                        # US research permits a same-session exit. For an
+                        # intraday breakout, assume the adverse stop touch came
+                        # after entry; daily OHLC cannot establish the order.
+                        nav *= stop / close
+                        exit_event = switch(day, 0, stop, "intraday", "entry_day_stop_conservative")
+                        open_trade.update(status="closed", exit_date=day, exit_phase="intraday",
+                                          adjusted_exit_price=stop, exit_reason="entry_day_stop_conservative",
+                                          exit_nav=nav, net_return=nav/open_trade["entry_nav_before_cost"]-1,
+                                          holding_bars=1, exit_event_id=exit_event["event_id"])
+                        trades.append(open_trade)
+                        open_trade, stop, pending_exit = None, None, None
+                    else:
+                        pending_exit = "entry_day_stop_t_plus_one"
         if not math.isfinite(nav) or nav <= 0:
             raise ValueError("Technical NAV became nonpositive or nonfinite.")
         day_decision.update(closing_exposure=exposure, pending_exit_reason=pending_exit)
         decisions.append(day_decision)
-        equity.append({"date": day, "valuation_time": f"{day}T15:00:00", "nav": nav,
+        equity.append({"date": day, "valuation_time": pd.Timestamp(row.get("session_close", f"{day}T15:00:00")).isoformat(), "nav": nav,
                        "daily_return": nav/before_nav-1, "exposure": exposure,
                        "overnight_exposure": old_exposure, "adjusted_close": close,
                        "cost_nav_units": costs-today_cost_before, "cumulative_cost_nav_units": costs,
@@ -296,14 +313,23 @@ def run_triple_screen(bars, calendar, settings=None, *, start=None, end=None, va
                        "excluded_from_performance": True},
             "metrics": metrics, "equity_curve": equity, "fills": fills,
             "signals": signals, "trades": trades, "decisions": decisions,
-            "assumptions": _variant_assumptions(variant)}
+            "assumptions": _variant_assumptions(variant, is_us=resolved.is_us),
+            **({"market": "US", "timezone": "America/New_York", "price_adjustment": "yahoo_split_dividend_adjusted_ohlc"} if resolved.is_us else {})}
 
 
-def _variant_assumptions(variant: str) -> list[str]:
+def _variant_assumptions(variant: str, *, is_us=False) -> list[str]:
     assumptions = list(ASSUMPTIONS)
+    if is_us:
+        assumptions[5] = "US version permits entry-day stops; an intraday entry/stop ambiguity assumes entry first and exit at the stop on that same session. No A-share T+1 sell lock is applied."
+        assumptions.append("US technical NAV only: brokerage cash settlement, margin requirements and account trading restrictions are not simulated. Yahoo vendor OHLC is adjusted by AdjClose/Close; volume remains provider-reported shares.")
     if variant == "drop_weekly":
         assumptions[4] = "Initial stop remains fixed; weekly direction neither filters new entries nor forces exits in drop_weekly."
         assumptions.append("drop_weekly removes both the weekly entry filter and weekly-invalidated exit, while preserving the same completed-week warmup and observed indicator fields.")
+    elif variant == "drop_weekly_entry":
+        assumptions.append("drop_weekly_entry removes only the weekly entry filter; negative daily EFI, prior-high breakout, the fixed initial stop and weekly-invalidated exit remain active. Completed-week warmup and observed indicator fields are unchanged.")
+    elif variant == "drop_weekly_exit":
+        assumptions[4] = "Initial stop remains fixed; weekly-filter invalidation does not force an exit in drop_weekly_exit."
+        assumptions.append("drop_weekly_exit removes only the weekly-invalidated exit; the original weekly direction and negative daily EFI entry filters and prior-high breakout remain active. Completed-week warmup and observed indicator fields are unchanged.")
     elif variant == "drop_pullback":
         assumptions.append("drop_pullback removes only the negative daily EFI requirement; the weekly direction filter, breakout trigger and weekly-invalidated exit remain active.")
     elif variant == "drop_trigger":

@@ -14,6 +14,8 @@ import re
 DETAIL_LIMIT = 20
 VARIANT_LABELS = {
     "full": ("完整 v1（full）", "保留周线方向、日线回调和前日高点突破三个滤网。"),
+    "drop_weekly_entry": ("仅移除周线入场过滤", "研究对照：保留周转弱退出，仅移除周方向入场要求，其余条件不变。"),
+    "drop_weekly_exit": ("仅移除周线退出", "研究对照：保留完整三层入场，仅移除周转弱退出；固定止损与市场卖出约束保留。"),
     "drop_weekly": ("移除周线滤网（drop_weekly）", "消融对照：移除周线方向入场过滤与周转弱退出；保留相同预热和初始止损。这不是完整 v1 的绩效。"),
     "drop_pullback": ("移除日线回调滤网（drop_pullback）", "消融对照：仅移除日 EFI2 为负的入场条件；保留周方向、突破触发与周退出。这不是完整 v1 的绩效。"),
     "drop_trigger": ("移除突破触发滤网（drop_trigger）", "消融对照：前两层通过后在下一候选日开盘入场，不等待前日高点突破；止损距离无效则拒绝。这不是完整 v1 的绩效。"),
@@ -210,6 +212,9 @@ def render_triple_report(run_dir: str | Path) -> Path:
     variant = config.get("variant", "full")
     variant_label, variant_description = VARIANT_LABELS[variant]
     settings = config.get("settings", {})
+    is_us = settings.get("version") == "triple_screen_us_pre_v1"
+    market_note = ("美股 · Yahoo拆股/分红调整OHLC · 美东交易日历 · 当日止损允许退出" if is_us else "A股 · 前复权 · T+1卖出锁定")
+    ambiguity_note = ("歧义入场保守视为先入场后触及止损，当日止损退出；不模拟券商结算和账户限制。" if is_us else "歧义入场按预先声明的保守 T+1 规则处理。")
     aggregates = summary.get("by_cost", [])
     cost_rows = [[_number(row.get("cost_bps")), row.get("completed_symbols"), row.get("failed_symbols"),
                   _number(row.get("mean_return"), percent=True), _number(row.get("median_return"), percent=True),
@@ -246,10 +251,10 @@ def render_triple_report(run_dir: str | Path) -> Path:
 <title>三重滤网技术研究报告 · {_text(variant_label)}</title><style>{STYLE}</style></head><body><main>
 <h1>三重滤网技术研究报告 · {_text(variant_label)}</h1>
 <p class="muted">运行：<code>{_text(summary.get('run_id'))}</code> · 状态：{_text(summary.get('status'))}</p>
-<div class="scope"><p><strong>前复权 · 标准化净值 · 独立逐股账户 · exploratory（探索性）</strong></p>
+<div class="scope"><p><strong>{_text(market_note)} · 标准化净值 · 独立逐股账户 · exploratory（探索性）</strong></p>
 <p><strong>研究变体：{_text(variant_label)}</strong>。{_text(variant_description)}</p>
 <p>起始净值为 1；收益不是实盘人民币账户收益。单边 bps 是比例摩擦情景，不是实际税费。逐股均值不是共享现金组合收益。</p>
-<p>范围仅为本次请求清单，不能据此认定全 A 股覆盖；已查看的数据不属于未见 holdout。</p></div>
+<p>范围仅为本次请求清单，不能据此认定全市场覆盖；已查看的数据不属于未见 holdout。</p></div>
 <p>基础规则版本：{_text(settings.get('version'))}；MACD {_text(settings.get('macd_fast'))}/{_text(settings.get('macd_slow'))}/{_text(settings.get('macd_signal'))}；EFI {_text(settings.get('force_span'))}；预热 {_text(settings.get('warmup_weeks'))} 个完成周。</p>
 <p>请求区间：{_text(config.get('start'))} → {_text(config.get('end'))}；目标股票 {_text(summary.get('target_symbols'))}；任务 {_text(summary.get('total_tasks'))}；成功 {_text(summary.get('completed_tasks'))}；失败 {_text(summary.get('failed_tasks'))}。</p>
 <h2>成本情景与收益分布</h2>{cost_table}
@@ -260,7 +265,7 @@ def render_triple_report(run_dir: str | Path) -> Path:
 <p id="visible-count" role="status" aria-live="polite">共 {_text(len(rendered_rows))} 个股票／成本情景</p></div>
 <div class="table-scroll"><table id="outcomes"><thead><tr>{head}</tr></thead><tbody>{''.join(rendered_rows)}</tbody></table></div>
 <h2>可追溯性</h2><p>生成前已逐项核对 artifacts.json 中的 SHA-256。此 HTML 是派生视图；原配置、输入、结果与摘要保持不变。</p>
-<p class="muted">日 OHLC 的盘中先后不确定，歧义入场按预先声明的保守 T+1 规则处理；详细事件只标日期和阶段。若股票实际评价日期不一致，应分组比较。</p>
+<p class="muted">日 OHLC 的盘中先后不确定，{_text(ambiguity_note)}详细事件只标日期和阶段。若股票实际评价日期不一致，应分组比较。</p>
 </main><script>{SCRIPT}</script></body></html>"""
     destination = root / "report.html"
     if destination.is_symlink() or destination.resolve() != destination:

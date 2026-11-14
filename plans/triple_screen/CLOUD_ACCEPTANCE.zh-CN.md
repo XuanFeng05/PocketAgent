@@ -2,6 +2,8 @@
 
 同步日期：2026-11-14。来源分支：`codex/us500-acceptance`，最新提交：`aea32a540c626835162b91ebbe6b295214d5ffa4`。该分支的前序下载入口提交为 `5c157756becaa18f59fdb2216894e68446ba1528`，US100/US500研究提交为 `ed99ec1`、`bc8d0b1`。
 
+证据归属补充：本文是此前读取到的云端交付摘要，不是本机复算结果。当前 `codex/bundle-review-research` 通过离线 bundle 合入的是较早 US100 的 `bf0c0ab`；没有据此合入 `aea32a5` 的 US500 研究工程，也没有取得原始美股行情。当前可运行入口以实际源码及 [US_MERGE](US_MERGE.zh-CN.md) 为准。
+
 ## 云端已确认内容
 
 - 云端是全新 Linux/Python 3.12.14 环境，可以安装 CPU 研究依赖并下载行情；没有安装 PyTorch/CUDA。

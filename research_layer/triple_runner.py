@@ -55,7 +55,7 @@ def normalize_triple_config(config: dict) -> dict:
         raise ValueError("Triple Screen configuration must be an object.")
     settings = resolve_triple_settings(config.get("settings"))
     variant = config.get("variant", "full")
-    if variant not in {"full", "drop_weekly", "drop_pullback", "drop_trigger"}:
+    if variant not in {"full", "drop_weekly", "drop_weekly_entry", "drop_weekly_exit", "drop_pullback", "drop_trigger"}:
         raise ValueError("Unknown Triple Screen research variant.")
     if config.get("adjust", "pre") != "pre":
         raise ValueError("Triple Screen technical research requires adjust=pre.")
@@ -72,8 +72,9 @@ def normalize_triple_config(config: dict) -> dict:
     if not isinstance(raw_symbols, list) or not 1 <= len(raw_symbols) <= 10000:
         raise ValueError("Provide an explicit symbols list of 1 to 10000 stocks.")
     symbols = [str(symbol).strip().upper() for symbol in raw_symbols]
-    if len(set(symbols)) != len(symbols) or any(not re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", symbol) for symbol in symbols):
-        raise ValueError("Symbols must be unique six-digit SH/SZ/BJ stock identifiers.")
+    symbol_pattern = r"[A-Z]{1,5}(?:-[A-Z])?" if settings.is_us else r"\d{6}\.(SH|SZ|BJ)"
+    if len(set(symbols)) != len(symbols) or any(not re.fullmatch(symbol_pattern, symbol) for symbol in symbols):
+        raise ValueError("Symbols must be unique identifiers for the explicitly selected market/version.")
     costs = config.get("cost_scenarios_bps", [settings.cost_bps])
     if not isinstance(costs, list) or not 1 <= len(costs) <= 8:
         raise ValueError("cost_scenarios_bps needs 1 to 8 values.")
@@ -92,6 +93,8 @@ def normalize_triple_config(config: dict) -> dict:
         raise ValueError("start must not exceed end.")
     if source == "csv" and not config.get("calendar_path"):
         raise ValueError("CSV input requires calendar_path with explicit daily open/closed facts.")
+    if settings.is_us and not config.get("calendar_path"):
+        raise ValueError("US input requires calendar_path; the default CN calendar must not be reused.")
     result = {**config, "schema_version": 1, "mode": "triple_screen", "adjust": "pre",
               "source_type": source, "source_path": str(Path(config["source_path"]).resolve()),
               "symbols": symbols, "settings": settings.to_dict(), "cost_scenarios_bps": [float(v) for v in costs],
@@ -316,7 +319,11 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
                         dates = pd.to_datetime(bars["datetime"])
                         evaluation = bars.loc[dates.between(selected["start"], selected["end"])].copy()
                         warmup = bars.loc[dates.lt(selected["start"])].copy()
-                        baselines = {name: run_technical_backtest(evaluation, name, cost_bps=cost, warmup_bars=warmup)
+                        session_closes = ({pd.Timestamp(r["date"]).date().isoformat(): r["session_close"]
+                                           for r in calendar.to_dict("records") if r["is_trading_day"]}
+                                          if resolved["settings"]["version"] == "triple_screen_us_pre_v1" else None)
+                        baselines = {name: run_technical_backtest(evaluation, name, cost_bps=cost, warmup_bars=warmup,
+                                                                session_closes=session_closes)
                                      for name in ("cash", "buy_hold")}
                         report = {"strategy": selected, "baselines": baselines,
                                   "excess_return_vs_buy_hold": selected["metrics"]["total_return"] - baselines["buy_hold"]["metrics"]["total_return"]}
@@ -352,7 +359,7 @@ def run_triple_experiment(config: dict, output_root: str | Path, *,
                    "target_symbols": len(resolved["symbols"]), "total_tasks": total,
                    "completed_tasks": successes, "failed_tasks": total-successes,
                    "by_cost": _summary(outcomes, resolved["cost_scenarios_bps"]), "outcomes": outcomes,
-                   "coverage_claim": "requested_list_only_not_certified_all_A_shares"}
+                   "coverage_claim": "requested_list_only_not_certified_full_market"}
         _json(run / "summary.json", summary)
         register(run / "summary.json")
         _json(run / "artifacts.json", {"schema_version": 2, "sha256": artifacts, "outcome_files": outcome_files})

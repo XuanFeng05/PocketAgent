@@ -77,12 +77,27 @@ def build_triple_features(bars: Any, calendar: Any, settings=None) -> pd.DataFra
     # snapshot is supplied. Never trust externally supplied weekly features.
     frame = frame.drop(columns=["force_index_2", "weekly_hist", "weekly_hist_previous",
                                 "weekly_completed_count", "weekly_available_at", "weekly_up",
-                                "indicators_ready", "entry_ready"], errors="ignore")
+                                "indicators_ready", "entry_ready", "session_close"], errors="ignore")
     if "volume" not in frame:
         raise ValueError("Triple Screen requires explicit daily volume in shares for Force Index.")
     # normalize_technical_bars already rejects negative, missing, or infinite
     # numeric volume. Zero volume is retained as a non-tradeable observation.
     cal = _normalize_calendar(calendar, frame.iloc[0]["datetime"], frame.iloc[-1]["datetime"])
+    if resolved.is_us:
+        if "session_close" not in cal:
+            raise ValueError("US research requires an explicit local session_close calendar including early closes.")
+        opens = cal.loc[cal["is_trading_day"]].copy()
+        closes = pd.to_datetime(opens["session_close"], errors="raise", format="mixed")
+        if closes.isna().any() or closes.dt.tz is not None or not closes.dt.normalize().eq(opens["date"]).all():
+            raise ValueError("US session_close must be a local timestamp on each trading date.")
+        valid_close = (closes.dt.hour.isin([13, 16]) & closes.dt.minute.eq(0)
+                       & closes.dt.second.eq(0) & closes.dt.microsecond.eq(0)
+                       & closes.dt.nanosecond.eq(0))
+        if not valid_close.all():
+            raise ValueError("Unsupported US session close; expected 13:00 or 16:00 New York time.")
+        close_lookup = dict(zip(opens["date"], closes))
+    else:
+        close_lookup = {d: pd.Timestamp.combine(d.date(), time(15)) for d in cal["date"]}
     session_dates = pd.DatetimeIndex(cal.loc[cal["is_trading_day"], "date"])
     daily_dates = pd.DatetimeIndex(frame["datetime"])
     unexpected = daily_dates.difference(session_dates)
@@ -114,10 +129,13 @@ def build_triple_features(bars: Any, calendar: Any, settings=None) -> pd.DataFra
         observed = pd.DatetimeIndex(group["datetime"])
         if not observed.equals(pd.DatetimeIndex(expected)):
             continue
-        weekly.append({"weekly_available_at": pd.Timestamp.combine(expected.iloc[-1].date(), time(15)),
+        weekly.append({"weekly_available_at": close_lookup[expected.iloc[-1]],
                        "weekly_close": float(group.iloc[-1]["close"])})
 
-    frame["_decision_close"] = frame["datetime"].map(lambda value: pd.Timestamp.combine(value.date(), time(15)))
+    frame["_decision_close"] = frame["datetime"].map(close_lookup)
+    # The selected market calendar owns close times, including when input bars
+    # carry stale or invalid session_close values from an earlier snapshot.
+    frame["session_close"] = frame["_decision_close"]
     if weekly:
         complete = pd.DataFrame(weekly)
         close = complete["weekly_close"]

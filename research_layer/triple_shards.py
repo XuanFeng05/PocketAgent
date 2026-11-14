@@ -102,7 +102,7 @@ def make_shard_protocol(config: dict, shard_size: int = 100):
             "csv_memory_guard_bytes": MAX_CSV_BYTES,
             "bounded_memory_verified": False,
             "memory_policy": "market_reads_one_symbol_per_child_task; CSV_has_64_MiB_input_guard_but_still_uses_existing_whole_file_reader; peak_memory_not_profiled",
-            "source_policy": "local_only_no_downloads", "coverage_claim": "requested_symbols_not_certified_all_A_shares"}
+            "source_policy": "local_only_no_downloads", "coverage_claim": "requested_symbols_not_certified_full_market"}
 
 
 def _request(protocol, shard):

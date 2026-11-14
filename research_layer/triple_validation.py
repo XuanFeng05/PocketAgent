@@ -102,7 +102,7 @@ def normalize_validation_protocol(config: dict, windows: list[dict]) -> dict:
             "aggregation_policy": "window_by_cost_distributions_no_concatenated_nav",
             "source_policy": "local_files_only_no_downloads",
             "warmup_policy": "past_data_before_each_requested_start_not_traded",
-            "coverage_claim": "explicit_requested_symbols_only_not_certified_full_A_shares"}
+            "coverage_claim": "explicit_requested_symbols_only_not_certified_full_market"}
 
 
 def _window_rows(summary: dict, window: dict, fixed: dict) -> list[dict]:

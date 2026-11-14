@@ -1,6 +1,47 @@
 # PocketAgent 当前状态与云端交接
 
-核对日期：2026-11-13。本地修复分支为`codex/local100-ui-repair`，基于首次上传的`a91b4ad`。下方首次快照问题保留作历史；本段及`plans/triple_screen/LOCAL_REPAIR.zh-CN.md`是更新后的修复状态。
+最新本地核对：2026-11-14，集成分支 `codex/bundle-review-research`。已离线验证并导入用户提供的 US100 bundle（`bf0c0ab`，27 文件，基线 `21cd849`），接续本地修复及云端状态摘要提交 `edfcad0`。bundle 没有原始行情，也不包含后来的 US500 多周期研究代码。下方云端下载、收益及测试数字保留为交付方记录，不能当作本机复现。
+
+本地新增研究将周线入场过滤与周线退出拆为四组固定对照，使用原 100 股前复权数据、单边 10bps，分别评价 2022–2024 与 2025；2025 已被先前实验查看。协议、结果和源码验收见 [WEEKLY_COMPONENT_PROTOCOL](plans/triple_screen/WEEKLY_COMPONENT_PROTOCOL.zh-CN.md)、[WEEKLY_COMPONENT_RESULTS](plans/triple_screen/WEEKLY_COMPONENT_RESULTS.zh-CN.md)、[BUNDLE_REVIEW](plans/triple_screen/BUNDLE_REVIEW.zh-CN.md)。没有改变默认策略，没有下载行情或安装依赖。新增两种组件对照可经 CLI/API 使用，页面原有十案例快捷菜单保持原样。
+
+## 较早 US100 云端交付记录（原文保留）
+
+本次先读取远端 `codex/local100-ui-repair` 的 **21cd849b6769185199e2e39ee069f2cd2d4a7f47** 及 `LOCAL_REPAIR.zh-CN.md`，然后在其上建立 `codex/us100-integration`。保留该分支已经实现的输入、进度、取消、终态、重启对账、历史和子报告逻辑，只补入独立美股适配；没有拿较早云端页面修改覆盖新修复。
+
+- **市场范围**：用户另行授权固定100只非仙股美股；`config/universe/us_research100.txt` 恰好100个唯一代码，与三个 `us100_*.json` 配置一致。原A股100股清单及默认规则保留。
+- **已实现**：Yahoo日线下载器、US独立数据/报告目录、纽约交易日历与提前收盘、`triple_screen_us_pre_v1`、`?market=US` 页面和 `/api/triple-us` API。美股版本允许入场当天止损；盘中顺序不明时保守处理并标记，原A股T+1不变。技术净值不模拟券商结算或保证金账户。
+- **下载已验证**：先单股单月连接落盘，再串行下载100股，20秒网络超时、0.5秒间隔、1800秒外层上限，实际653.178秒退出码0。100成功、0失败，2020-01-02至2026-07-10，每股1638根日线，共163800行；请求末日为2026-07-12。
+- **非仙股筛查**：全部为NYSE/Nasdaq、USD、EQUITY；获取时最新价门槛10美元、请求末段60交易日供应商Close×Volume中位数门槛2500万美元，实际最低分别28.83美元、约4.14亿美元。清单在查看回测收益前固定；仍有当前存活样本选择偏差，不称历史全市场。
+- **质量已验证**：原始JSON/CSV/Parquet及日历哈希一致，无重复日期、缺失交易日、非法OHLC或缺失量。本样本零量行0，不删除停牌行补齐。日历2385个自然日、1638交易日，包含2025-01-09特殊休市。100股均在2021-12-06满足默认100周预热资格，实际主实验统一2022-01-03至2025-12-31。2026每股130行只检查质量，不作未见测试。
+- **价格口径**：Yahoo AdjClose/Close调整OHLC，供应商股数不乘分红因子；存储层adjust=pre不代表BaoStock复权。原始事件/调整因子/下载时间/参数/哈希保留，不自动修价或填量；缺失amount保留为不用的源字段。内部一致性通过不等于权威复权版本认证。
+- **BaoStock仍受阻**：原A股单股探测两次失败，登录10002007；端点DNS报Temporary failure in name resolution。只证明当前云端连接失败，不能断言地区限制。原100股完整下载未启动，不把US结果当成A股下载成功。Twelve Data演示接口可达但正式取数需key，Stooq返回验证页，均未混入本次行情。
+
+### 云端实际测试分级
+
+| 验证层 | 本次结果与边界 |
+| --- | --- |
+| 修复分支原样回归 | 21cd849在云端 **497 passed、2 skipped、7 warnings，89.76秒**；Node 10项通过。独立于本机此前497通过的记录 |
+| 合并后完整回归 | **512 passed、2 skipped、14 warnings，66.88秒**；Node 12项通过。新增US规则/日历/数据拒绝/隔离和四模式HTTP合同；fixture是合成数据，不能替代真实行情实验 |
+| 最后定向回归 | 年度/案例的覆盖声明改为市场中性文字后，年度、研究、取消与US HTTP共 **74 passed，13.07秒**；未改变数值计算逻辑，依赖检查通过 |
+| 真实100股下载与质量 | 上述100/100及163800行来自本次真实Yahoo取数，非合成数据或原机历史摘要 |
+| 整合后真实100股CLI | 2022–2025、10bps、100/100完成、0失败，73.643秒，退出码0；独立单股净值，不是共享资金组合 |
+| 整合后真实行情四模式HTTP | 单股1任务、100股批量100任务、单股4年度4任务、单股10案例10任务，共115/115完成，0失败；16个基础/子报告链接均HTTP200且显示US口径；不冒称年度/案例也各跑了100股 |
+| 实时进度及取消 | 100股批量观察到0至100的实际任务计数；另一次100股批次在观察到3项完成后请求取消，当前步骤结束后停在4/100，终态cancelled、96未完成，partial_result保留、0失败；重复取消与重新构造服务后的结果读取一致。不是强杀进程或逐bar立即取消 |
+| 浏览器 | 云端Chromium启动报`socket() failed: Operation not permitted`；本轮没有真实浏览器点击截图，不用HTTP测试冒充浏览器验收 |
+
+整合后HTTP验证总耗时94.845秒、退出码0。证据在本工作副本 `runtime_layer/cloud_audit/repair_branch_pytest.*`、`integrated_pytest.*`、`integrated_us100_cli.*`、`integrated_us_http/results.json`；原下载及质量审计证据保留在最初云端工作副本的 `runtime_layer/cloud_audit`、`runtime_layer/reports/us100_quality`。所有行情、原始响应、数据库、环境和运行工件均不进Git，不传回本机。
+
+### 已实现与剩余边界
+
+| 原Dashboard问题 | 当前整合状态 |
+| --- | --- |
+| 格式化、案例/日期、默认选择 | 沿用21cd849的修复；batch默认、可编辑年度窗口、10案例与数字参数不被云端旧实现覆盖 |
+| 进度、取消、状态传递 | 沿用真实任务计数、步骤边界协作取消、partial/failed/cancelled和report_warning；不是逐bar立即中断 |
+| 重启与孤立记录 | 沿用owner核对、interrupted处理和终态重读；测试通过不等于所有Windows异常退出方式均已覆盖 |
+| 年度/案例报告 | 沿用子报告路径约束、按需生成和导航；美股链接增加独立API前缀及前端安全允许规则 |
+| CLI历史与跨进程续算 | 仍不自动导入任意CLI历史；年度/案例没有GUI跨进程续算按钮，保持LOCAL_REPAIR登记边界 |
+
+依赖版本、完整下载参数、单股探测、运行入口与本地合并方法见 **[US_MERGE.zh-CN.md](plans/triple_screen/US_MERGE.zh-CN.md)**；市场口径见 **[US_SCOPE.zh-CN.md](plans/triple_screen/US_SCOPE.zh-CN.md)**。以下本地及首次快照历史保留原证据归属。
 
 ## 本地修复分支最新状态
 

@@ -23,7 +23,7 @@ from strategy_layer.triple_screen import resolve_triple_settings
 
 
 SCOPE = "exploratory_study"
-VARIANTS = {"full", "drop_weekly", "drop_pullback", "drop_trigger"}
+VARIANTS = {"full", "drop_weekly", "drop_weekly_entry", "drop_weekly_exit", "drop_pullback", "drop_trigger"}
 OVERRIDES = {"macd_fast", "macd_slow", "macd_signal", "force_span"}
 CONFIG_KEYS = {"schema_version", "mode", "source_type", "source_path", "calendar_path", "symbols",
                "settings", "adjust", "cost_scenarios_bps", "research_scope", "notes", "start", "end", "max_tasks"}
@@ -125,7 +125,7 @@ def normalize_study_protocol(config: dict, cases: list[dict]) -> dict:
             "selection_policy": "no_winner_selection_no_ranking", "primary_case_id": "primary",
             "pairing_policy": "same_symbol_cost_effective_dates_input_sha256_calendar_sha256",
             "account_policy": "independent_initial_nav_1_per_symbol_per_case",
-            "source_policy": "local_files_only_no_downloads", "coverage_claim": "requested_list_not_full_A_share_certification"}
+            "source_policy": "local_files_only_no_downloads", "coverage_claim": "requested_list_not_full_market_certification"}
 
 
 def _failure_rows(fixed, error):

@@ -2,6 +2,8 @@
 
 本文是从云端 `codex/us500-acceptance` 分支同步的口径摘要，不包含原始行情或下载缓存。
 
+2026-11-14本地补充：下列 `--source` 等命令属于后续云端分支，当前离线合入的早期 US100 bundle 不包含全部这些入口。不要将其视为当前本地 CLI 的已验收命令；当前 US100 配置及 `download_us` 入口见 [US_MERGE](US_MERGE.zh-CN.md)。本机未执行下载或安装。
+
 ## A 股 BaoStock
 
 ```bash

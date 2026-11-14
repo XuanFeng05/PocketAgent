@@ -69,12 +69,16 @@ DEFAULT_DB_PATH = "runtime_layer/data"
 
 
 class DashboardServer:
-    def __init__(self, *, research_root: str | Path | None = None, triple_data_root: str | Path | None = None) -> None:
+    def __init__(self, *, research_root: str | Path | None = None, triple_data_root: str | Path | None = None,
+                 triple_us_data_root: str | Path | None = None) -> None:
         self.jobs = JobManager(max_workers=2)
         self.research = ResearchService(self.jobs, output_root=research_root)
         triple_root = (Path(research_root).resolve() / "triple_dashboard") if research_root else None
         self.triple = TripleDashboardService(self.jobs, output_root=triple_root,
             **({"data_root": triple_data_root} if triple_data_root else {}))
+        us_root = (Path(research_root).resolve() / "triple_dashboard_us") if research_root else None
+        self.triple_us = TripleDashboardService(self.jobs, output_root=us_root,
+                                               data_root=triple_us_data_root, market="US")
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -110,6 +114,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        triple = self.app.triple_us if path.startswith("/api/triple-us/") else self.app.triple
+        if path.startswith("/api/triple-us/"):
+            path = path.replace("/api/triple-us/", "/api/triple/", 1)
 
         try:
             if path == "/api/health":
@@ -121,17 +128,17 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/api/triple/spec":
-                self._send_json({"ok": True, "data": self.app.triple.spec()})
+                self._send_json({"ok": True, "data": triple.spec()})
                 return
 
             if path == "/api/triple/runs":
-                self._send_json({"ok": True, "data": self.app.triple.list_runs()})
+                self._send_json({"ok": True, "data": triple.list_runs()})
                 return
 
             if path.startswith("/api/triple/runs/"):
                 parts = path.strip("/").split("/")
                 if (len(parts) == 5 and parts[4] == "report") or (len(parts) == 6 and parts[4] == "reports"):
-                    report = self.app.triple.report(parts[3], int(parts[5]) if len(parts) == 6 else 0).read_bytes()
+                    report = triple.report(parts[3], int(parts[5]) if len(parts) == 6 else 0).read_bytes()
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
                     self.send_header("Content-Length", str(len(report)))
@@ -140,7 +147,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     return
                 if len(parts) != 4:
                     raise ValueError("Invalid Triple Screen result path")
-                self._send_json({"ok": True, "data": self.app.triple.detail(parts[3])})
+                self._send_json({"ok": True, "data": triple.detail(parts[3])})
                 return
 
             if path == "/api/research/runs":
@@ -311,6 +318,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        triple = self.app.triple_us if path.startswith("/api/triple-us/") else self.app.triple
+        if path.startswith("/api/triple-us/"):
+            path = path.replace("/api/triple-us/", "/api/triple/", 1)
 
         try:
             payload = self._read_json()
@@ -320,18 +330,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/api/triple/start":
-                self._send_json({"ok": True, "data": self.app.triple.start(payload)}, status=202)
+                self._send_json({"ok": True, "data": triple.start(payload)}, status=202)
                 return
 
             if path == "/api/triple/preview":
-                self._send_json({"ok": True, "data": self.app.triple.preview(payload)})
+                self._send_json({"ok": True, "data": triple.preview(payload)})
                 return
 
             if path.startswith("/api/triple/runs/") and path.endswith("/cancel"):
                 parts = path.strip("/").split("/")
                 if len(parts) != 5:
                     raise ValueError("Invalid Triple Screen cancellation path")
-                self._send_json({"ok": True, "data": self.app.triple.cancel(parts[3])})
+                self._send_json({"ok": True, "data": triple.cancel(parts[3])})
                 return
 
             if path == "/api/research/preview":

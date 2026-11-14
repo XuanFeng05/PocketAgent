@@ -60,4 +60,19 @@ test('page defaults batch and exposes editable windows and real study choices',(
  const html=fs.readFileSync(path.join(__dirname,'../../app_layer/frontend/triple.html'),'utf8');
  assert.match(html,/<option value="batch" selected>/);assert.match(html,/id="windowRows"/);assert.match(html,/id="cases"/);assert.match(html,/id="resetWindows"/);assert.match(html,/data-setting="force_span"/);assert.doesNotMatch(html,/规则参数 JSON/);
 });
+test('US market keeps preview, polling, history and cancellation in its namespace',()=>{
+ for(const suffix of ['spec','preview','start','runs','runs/job','runs/job/cancel']){
+  assert.equal(ui.marketApiPath(`/api/triple/${suffix}`,'?market=US'),`/api/triple-us/${suffix}`);
+  assert.equal(ui.marketApiPath(`/api/triple/${suffix}`,'?market=CN'),`/api/triple/${suffix}`);
+ }
+ assert.equal(ui.marketApiPath('/api/triple/spec',''),'/api/triple/spec');
+});
+test('US child report links remain visible and reject unsafe paths',()=>{
+ const text=ui.summaryMarkup({report_links:[
+  {label:'US report',url:'/api/triple-us/runs/job/reports/0'},
+  {label:'escape',url:'/api/triple-us/runs/../reports/0'},
+  {label:'external',url:'//bad.example/api/triple-us/runs/job/reports/0'}]});
+ assert.match(text,/\/api\/triple-us\/runs\/job\/reports\/0/);
+ assert.doesNotMatch(text,/escape|external|bad\.example/);
+});
 console.log(`${passed} UI behavior tests passed`);

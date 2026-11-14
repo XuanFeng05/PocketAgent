@@ -1,5 +1,9 @@
 'use strict';
 (function () {
+  function marketApiPath(path, search='') {
+    const root = new URLSearchParams(search).get('market') === 'US' ? '/api/triple-us' : '/api/triple';
+    return path.replace(/^\/api\/triple(?=\/)/, root);
+  }
   const SETTING_DEFAULTS = {macd_fast:12, macd_slow:26, macd_signal:9, force_span:2, warmup_weeks:100};
   const CASES = [
     {id:'primary',label:'完整三重滤网（基准）',settings:{},variant:'full'},
@@ -90,17 +94,17 @@
     }
     if(Array.isArray(s.outcomes))sections.push(`<details><summary>逐股状态与失败原因（${s.outcomes.length} 项）</summary>${table(['股票','单边 bps','状态','实际区间','收益','原因'],s.outcomes.slice(0,200).map(r=>[r.symbol,r.cost_bps,stateLabel(r.status),r.start?`${r.start} → ${r.end}`:'—',percent(r.metrics?.total_return),r.error||'—']))}${s.outcomes.length>200?'<p>此处显示前 200 项，完整记录见报告。</p>':''}</details>`);
     const links=Array.isArray(record.report_links)?record.report_links:record.report_url?[{label:'打开详细报告',url:record.report_url}]:[];
-    const safe=links.filter(l=>typeof l.url==='string'&&l.url.startsWith('/api/triple/')&&!l.url.startsWith('//'));
+    const safe=links.filter(l=>typeof l.url==='string'&&/^\/api\/triple(?:-us)?\/runs\/[A-Za-z0-9_-]+\/(?:reports\/\d+|report)$/.test(l.url));
     if(safe.length)sections.push(`<h3>详细报告</h3><ul class="report-links">${safe.map(l=>`<li><a href="${escapeHtml(l.url)}" target="_blank" rel="noopener">${escapeHtml(l.label||'查看报告')}</a></li>`).join('')}</ul>`);
     const reportWarning=record.report_warning||record.report_error;
     if(reportWarning)sections.push(`<p class="error">报告生成未完成：${escapeHtml(reportWarning)}</p>`);
     return sections.join('');
   }
-  if(typeof module!=='undefined'&&module.exports)module.exports={annualWindows,validateWindows,parseCosts,buildPayload,percent,points,summaryMarkup,TERMINAL,ACTIVE,CASES,SETTING_DEFAULTS};
+  if(typeof module!=='undefined'&&module.exports)module.exports={annualWindows,validateWindows,parseCosts,buildPayload,percent,points,summaryMarkup,marketApiPath,TERMINAL,ACTIVE,CASES,SETTING_DEFAULTS};
   if(typeof document==='undefined')return;
   const $=id=>document.getElementById(id);
   let inventory=[],cases=CASES,activeJob=null,viewedJob=null,pollTimer=null,viewVersion=0,historyVersion=0,ready=false,submitting=false;
-  async function api(path,payload){const r=await fetch(path,payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||`请求失败 ${r.status}`);return d.data;}
+  async function api(path,payload){const r=await fetch(marketApiPath(path,window.location.search),payload===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||`请求失败 ${r.status}`);return d.data;}
   function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
   function selection(){return [...document.querySelectorAll('#symbols input:checked')].map(x=>x.value);}
   function updateSelection(){const n=selection().length;$('selectionCount').textContent=`已选 ${n} / ${inventory.length} 股`;$('run').disabled=!ready||submitting||!!activeJob||n===0;updateBudget();}
@@ -131,5 +135,5 @@
   $('run').onclick=async()=>{if(activeJob||submitting)return;submitting=true;updateSelection();try{const request=buildPayload(form(),cases);status('正在检查配置和实验规模…');await api('/api/triple/preview',request);const result=await api('/api/triple/start',request);activeJob=result.job_id;viewedJob=activeJob;viewVersion++;$('cancel').hidden=false;$('cancel').disabled=false;status(`已提交 ${request.symbols.length} 股的实验。`);await poll();}catch(e){status(e.message,true);}finally{submitting=false;updateSelection();}};
   $('cancel').onclick=async()=>{if(!activeJob)return;$('cancel').disabled=true;try{await api(`/api/triple/runs/${encodeURIComponent(activeJob)}/cancel`,{});status('已请求取消，当前计算步骤结束后停止；已完成结果保留。');schedule();}catch(e){status(e.message,true);$('cancel').disabled=false;}};
   window.addEventListener('beforeunload',()=>clearTimeout(pollTimer));
-  (async()=>{try{const spec=await api('/api/triple/spec');inventory=spec.symbols||[];cases=Array.isArray(spec.default_cases)&&spec.default_cases.some(c=>c.id==='primary')?spec.default_cases:CASES;$('start').value=spec.default_start||'2022-01-04';$('end').value=spec.default_end||'2024-12-31';$('costs').value=(spec.default_costs_bps||[10]).join(', ');for(const input of document.querySelectorAll('[data-setting]'))input.value=spec.settings_defaults?.[input.dataset.setting]??SETTING_DEFAULTS[input.dataset.setting];$('symbols').innerHTML=inventory.map(s=>`<label><input type="checkbox" value="${escapeHtml(s)}" checked>${escapeHtml(s)}</label>`).join('');renderCases();ready=true;resetWindows();modeChanged();status(inventory.length?`已读取 ${inventory.length} 股本地前复权数据。`:'本地没有前复权股票数据；页面不会自动下载。');await refreshHistory(true);}catch(e){status(`初始化失败：${e.message}`,true);$('run').disabled=true;}})();
+  (async()=>{try{const spec=await api('/api/triple/spec');$('marketBadge').textContent=spec.market==='US'?'美股 · 美东日历':'A股 · T+1';$('sourceHint').textContent=`${spec.price_adjustment}；${spec.market==='US'?'美股版本允许入场当日止损退出。':'A股当天买入不能卖出。'}批量最多100股。`;inventory=spec.symbols||[];cases=Array.isArray(spec.default_cases)&&spec.default_cases.some(c=>c.id==='primary')?spec.default_cases:CASES;$('start').value=spec.default_start||'2022-01-04';$('end').value=spec.default_end||'2024-12-31';$('costs').value=(spec.default_costs_bps||[10]).join(', ');for(const input of document.querySelectorAll('[data-setting]'))input.value=spec.settings_defaults?.[input.dataset.setting]??SETTING_DEFAULTS[input.dataset.setting];$('symbols').innerHTML=inventory.map(s=>`<label><input type="checkbox" value="${escapeHtml(s)}" checked>${escapeHtml(s)}</label>`).join('');renderCases();ready=true;resetWindows();modeChanged();status(inventory.length?`已读取 ${inventory.length} 股本地前复权数据。`:'本地没有前复权股票数据；页面不会自动下载。');await refreshHistory(true);}catch(e){status(`初始化失败：${e.message}`,true);$('run').disabled=true;}})();
 })();

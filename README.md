@@ -4,6 +4,8 @@ CPU-first strategy research and backtesting. 保留原A股100股研究；在 `co
 
 **当前状态与云端接手入口：[PROJECT_STATUS.zh-CN.md](PROJECT_STATUS.zh-CN.md)。** 早期 docs/plans 保留历史决策与实验摘要，其中的完成声明应结合最新状态说明及实际代码核对。
 
+2026-11-26恢复并完成 [20%年化／15%回撤首轮账户研究](plans/target20/RESULTS.zh-CN.md)：24个固定月度组合实验，共用一份现金，按日历CAGR评价。**本轮未找到同时达标的候选**，保留所有结果与限制，没有把单年高收益或单股均值冒充账户年化。
+
 用户进一步提出的 [两种AND与ICT日线代理比较](plans/user_trend_and/RESULTS.zh-CN.md) 已完成1200案例及400份旧OR控制相等核验。AND模式作为显式参数加入，原OR默认保持；收盘近似与次日开盘分别报告，不按结果自动选择规则。
 
 用户自定义的 [EMA／EFI／ATR趋势方案](plans/user_trend/RESULTS.zh-CN.md) 已完成首轮800案例：保留用户阈值及确认后的规则，分别报告开盘／收盘近似、两条日内路径和成本。新模块独立，默认策略未改。数据及运行工件留本机，本地5分钟数据的全期一致性限制也已披露。
